@@ -30,19 +30,19 @@ function print_section() {
 }
 
 function print_info() {
-    echo -e "${BLUE}ℹ️  │ $1${NC}"
+    echo -e "${BLUE}ℹ️ $1${NC}"
 }
 
 function print_success() {
-    echo -e "${GREEN}✅ │ $1${NC}"
+    echo -e "${GREEN}✅ $1${NC}"
 }
 
 function print_warning() {
-    echo -e "${YELLOW}⚠️  │ $1${NC}"
+    echo -e "${YELLOW}⚠️ $1${NC}"
 }
 
 function print_error() {
-    echo -e "${RED}❌ │ $1${NC}"
+    echo -e "${RED}❌ $1${NC}"
 }
 
 function ask_with_default() {
@@ -91,11 +91,17 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
-# ======= COMPROBAR QUE ESTAMOS EN PROXMOX =======
-if [ ! -f /usr/bin/pct ]; then
+# ======= COMPROBAR QUE ESTAMOS EN PROXMOX Y ESTABLECER RUTA PCT =======
+if [ -f /usr/sbin/pct ]; then
+    PCT_CMD="/usr/sbin/pct"
+elif [ -f /usr/bin/pct ]; then
+    PCT_CMD="/usr/bin/pct"
+else
     print_error "Este script debe ejecutarse en un servidor Proxmox"
+    print_info "Verificando que pct esté instalado en el sistema"
     exit 1
 fi
+print_success "Detectado comando pct en: $PCT_CMD"
 
 # ======= MOSTRAR AYUDA =======
 show_help
@@ -176,28 +182,15 @@ fi
 print_section "CREANDO CONTENEDOR LXC"
 
 # Descargar la plantilla si no existe
-print_info "Verificando disponibilidad de plantilla Ubuntu 24.04..."
-pveam update
-
-# Verificar el nombre exacto de la plantilla Ubuntu 24.04
-TEMPLATE=$(pveam available | grep ubuntu-24.04 | head -n 1 | awk '{print $2}')
-
-if [ -z "$TEMPLATE" ]; then
-    print_error "No se encontró la plantilla de Ubuntu 24.04. Verificando todas las disponibles..."
-    pveam available | grep ubuntu
-    exit 1
-fi
-
-print_info "Plantilla encontrada: $TEMPLATE"
-
-# Verificar si la plantilla ya está descargada
-if [ ! -f "/var/lib/vz/template/cache/${TEMPLATE}" ]; then
+if [ ! -f /var/lib/vz/template/cache/ubuntu-24.04-standard_24.04-1_amd64.tar.zst ]; then
     print_info "Descargando plantilla de Ubuntu 24.04..."
-    pveam download local $TEMPLATE
+    pveam update
+    pveam available | grep ubuntu-24.04
+    pveam download local ubuntu-24.04-standard_24.04-1_amd64.tar.zst
 fi
 
 # Preparar comando de creación del contenedor
-create_cmd="pct create $CONTAINER_ID local:vztmpl/$TEMPLATE \
+create_cmd="$PCT_CMD create $CONTAINER_ID local:vztmpl/ubuntu-24.04-standard_24.04-1_amd64.tar.zst \
   --hostname $CONTAINER_NAME \
   --memory $MEMORY \
   --cores $CORES \
@@ -230,7 +223,7 @@ print_success "Contenedor LXC creado con éxito"
 
 # Iniciar el contenedor
 print_info "Iniciando el contenedor..."
-pct start $CONTAINER_ID
+$PCT_CMD start $CONTAINER_ID
 
 # Esperar a que el contenedor esté listo
 print_info "Esperando a que el contenedor se inicie completamente..."
@@ -253,7 +246,7 @@ BOLD='\033[1m'
 NC='\033[0m' # No Color
 
 function print_step() {
-    echo -e "\n${BOLD}${CYAN}>>> │ $1${NC}\n"
+    echo -e "\n${BOLD}${CYAN}>>> $1${NC}\n"
 }
 
 function print_success() {
@@ -394,15 +387,15 @@ EOL
 
 # Enviar el script al contenedor
 print_info "Enviando script de instalación al contenedor..."
-pct push $CONTAINER_ID /tmp/odoo_install.sh /tmp/odoo_install.sh
+$PCT_CMD push $CONTAINER_ID /tmp/odoo_install.sh /tmp/odoo_install.sh
 
 # Ejecutar el script dentro del contenedor
 print_info "Ejecutando script de instalación dentro del contenedor..."
-pct exec $CONTAINER_ID -- bash -c "chmod +x /tmp/odoo_install.sh && ODOO_DB_PASSWORD='$ODOO_DB_PASSWORD' /tmp/odoo_install.sh"
+$PCT_CMD exec $CONTAINER_ID -- bash -c "chmod +x /tmp/odoo_install.sh && ODOO_DB_PASSWORD='$ODOO_DB_PASSWORD' /tmp/odoo_install.sh"
 
 # Obtener la IP del contenedor
 if [ "$IP_ADDRESS" == "dhcp" ]; then
-    CONTAINER_IP=$(pct exec $CONTAINER_ID -- ip -4 addr show eth0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}')
+    CONTAINER_IP=$($PCT_CMD exec $CONTAINER_ID -- ip -4 addr show eth0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}')
 else
     CONTAINER_IP=${IP_ADDRESS%/*}
 fi
@@ -426,11 +419,11 @@ echo -e "Usuario PostgreSQL: ${BOLD}odoo18${NC}"
 echo -e "Contraseña PostgreSQL: ${BOLD}$ODOO_DB_PASSWORD${NC}"
 echo
 echo -e "${BOLD}COMANDOS ÚTILES:${NC}"
-echo -e "Iniciar contenedor: ${CYAN}pct start $CONTAINER_ID${NC}"
-echo -e "Detener contenedor: ${CYAN}pct stop $CONTAINER_ID${NC}"
-echo -e "Entrar en el contenedor: ${CYAN}pct enter $CONTAINER_ID${NC}"
-echo -e "Ver logs de Odoo: ${CYAN}pct exec $CONTAINER_ID -- tail -f /var/log/odoo/odoo18.log${NC}"
-echo -e "Reiniciar Odoo: ${CYAN}pct exec $CONTAINER_ID -- systemctl restart odoo18.service${NC}"
+echo -e "Iniciar contenedor: ${CYAN}$PCT_CMD start $CONTAINER_ID${NC}"
+echo -e "Detener contenedor: ${CYAN}$PCT_CMD stop $CONTAINER_ID${NC}"
+echo -e "Entrar en el contenedor: ${CYAN}$PCT_CMD enter $CONTAINER_ID${NC}"
+echo -e "Ver logs de Odoo: ${CYAN}$PCT_CMD exec $CONTAINER_ID -- tail -f /var/log/odoo/odoo18.log${NC}"
+echo -e "Reiniciar Odoo: ${CYAN}$PCT_CMD exec $CONTAINER_ID -- systemctl restart odoo18.service${NC}"
 echo
 print_warning "Guarda esta información en un lugar seguro."
 echo
