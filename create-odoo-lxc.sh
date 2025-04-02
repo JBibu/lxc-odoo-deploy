@@ -30,19 +30,19 @@ function print_section() {
 }
 
 function print_info() {
-    echo -e "${BLUE}ℹ️ $1${NC}"
+    echo -e "${BLUE}ℹ️  │ $1${NC}"
 }
 
 function print_success() {
-    echo -e "${GREEN}✅ $1${NC}"
+    echo -e "${GREEN}✅ │ $1${NC}"
 }
 
 function print_warning() {
-    echo -e "${YELLOW}⚠️ $1${NC}"
+    echo -e "${YELLOW}⚠️  │ $1${NC}"
 }
 
 function print_error() {
-    echo -e "${RED}❌ $1${NC}"
+    echo -e "${RED}❌ │ $1${NC}"
 }
 
 function ask_with_default() {
@@ -176,15 +176,28 @@ fi
 print_section "CREANDO CONTENEDOR LXC"
 
 # Descargar la plantilla si no existe
-if [ ! -f /var/lib/vz/template/cache/ubuntu-24.04-standard_24.04-1_amd64.tar.zst ]; then
+print_info "Verificando disponibilidad de plantilla Ubuntu 24.04..."
+pveam update
+
+# Verificar el nombre exacto de la plantilla Ubuntu 24.04
+TEMPLATE=$(pveam available | grep ubuntu-24.04 | head -n 1 | awk '{print $2}')
+
+if [ -z "$TEMPLATE" ]; then
+    print_error "No se encontró la plantilla de Ubuntu 24.04. Verificando todas las disponibles..."
+    pveam available | grep ubuntu
+    exit 1
+fi
+
+print_info "Plantilla encontrada: $TEMPLATE"
+
+# Verificar si la plantilla ya está descargada
+if [ ! -f "/var/lib/vz/template/cache/${TEMPLATE}" ]; then
     print_info "Descargando plantilla de Ubuntu 24.04..."
-    pveam update
-    pveam available | grep ubuntu-24.04
-    pveam download local ubuntu-24.04-standard_24.04-1_amd64.tar.zst
+    pveam download local $TEMPLATE
 fi
 
 # Preparar comando de creación del contenedor
-create_cmd="pct create $CONTAINER_ID local:vztmpl/ubuntu-24.04-standard_24.04-1_amd64.tar.zst \
+create_cmd="pct create $CONTAINER_ID local:vztmpl/$TEMPLATE \
   --hostname $CONTAINER_NAME \
   --memory $MEMORY \
   --cores $CORES \
@@ -240,7 +253,7 @@ BOLD='\033[1m'
 NC='\033[0m' # No Color
 
 function print_step() {
-    echo -e "\n${BOLD}${CYAN}>>> $1${NC}\n"
+    echo -e "\n${BOLD}${CYAN}>>> │ $1${NC}\n"
 }
 
 function print_success() {
