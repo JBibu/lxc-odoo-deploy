@@ -94,6 +94,12 @@ validate_not_empty() {
     fi
 }
 
+# Función para escapar espacios en nombres
+escape_spaces() {
+    local input=$1
+    echo "${input// /\\ }"
+}
+
 # Función para instalar dependencias necesarias
 install_dependencies() {
     info_msg "Verificando e instalando dependencias necesarias en el host..."
@@ -160,7 +166,7 @@ check_template_storage() {
         if [[ "$enable_templates" =~ ^[Ss]$ ]]; then
             info_msg "Habilitando soporte para templates en almacenamiento '$storage'..."
             
-            # Añadir 'vztmpl' al contenido del almacenamiento
+            # Añadir 'vztmpl' al contenido del almacenamiento (evitar duplicados)
             local new_content="$content,vztmpl"
             pvesh set /nodes/$(hostname)/storage/$storage --content "$new_content" > /dev/null 2>&1
             
@@ -171,7 +177,7 @@ check_template_storage() {
                 error_exit "No se pudo habilitar el soporte para templates en '$storage'"
             fi
         else
-            warn_msg "No se habilitó el soporte para templates. Se utilizará el almacenamiento local por defecto para descargar templates."
+            warn_msg "No se habilitó el soporte para templates. Selecciona otro almacenamiento que soporte templates."
             return 1
         fi
     else
@@ -198,15 +204,12 @@ create_lxc_container() {
     local template_storage_enabled=false
     local template_storage=$storage
     
-    if check_template_storage "$storage"; then
-        template_storage_enabled=true
-    else
-        template_storage="local"
-        warn_msg "Se utilizará el almacenamiento 'local' para descargar el template"
+    if ! check_template_storage "$storage"; then
+        error_exit "El almacenamiento seleccionado no soporta templates. Ejecuta el script nuevamente y selecciona un almacenamiento diferente o habilita el soporte para templates."
     fi
     
     # Descargar la plantilla si no existe
-    local template_name="ubuntu-24.04-standard_24.04-1_amd64.tar.gz"
+    local template_name="ubuntu-24.04-standard_24.04-2_amd64.tar.zst"
     local template_exists=$(pveam list "$template_storage" 2>/dev/null | grep -c "$template_name")
     
     if [ "$template_exists" -eq 0 ]; then
@@ -218,7 +221,12 @@ create_lxc_container() {
             error_exit "No se encontró la plantilla de Ubuntu 24.04. Verifica que Proxmox esté actualizado."
         fi
         
-        pveam download "$template_storage" "$template_name" >/dev/null 2>&1 || error_exit "No se pudo descargar la plantilla en '$template_storage'"
+        pveam download "$template_storage" "$template_name" >/dev/null 2>&1
+        
+        if [ $? -ne 0 ]; then
+            error_exit "No se pudo descargar la plantilla en '$template_storage'. Verifica que el almacenamiento soporte templates."
+        fi
+        
         success_msg "Plantilla descargada correctamente en '$template_storage'"
     else
         success_msg "Ya existe una plantilla de Ubuntu 24.04 en '$template_storage'"
@@ -250,7 +258,7 @@ create_lxc_container() {
         -start 1 \
         -unprivileged 1 \
         -features "nesting=1" \
-        -storage "$storage" >/dev/null 2>&1 || error_exit "No se pudo crear el contenedor"
+        >/dev/null 2>&1 || error_exit "No se pudo crear el contenedor"
     
     success_msg "Contenedor creado correctamente"
     
@@ -324,6 +332,10 @@ su - odoo -c "git clone --depth 1 --branch $odoo_version https://www.github.com/
 # Crear directorio para módulos personalizados
 mkdir -p /opt/odoo/custom-addons
 chown -R odoo:odoo /opt/odoo/custom-addons
+
+# Crear directorio para datos
+mkdir -p /opt/odoo/data
+chown -R odoo:odoo /opt/odoo/data
 
 # Crear entorno virtual Python para Odoo
 su - odoo -c "python3 -m venv /opt/odoo/venv"
@@ -460,9 +472,6 @@ main() {
     # Verificar e instalar dependencias
     install_dependencies
     
-    # Verificar la conexión a Proxmox
-    check_proxmox
-    
     # Verificar los IDs de contenedores existentes para informar al usuario
     info_msg "Obteniendo lista de IDs de contenedores y VMs existentes..."
     local existing_ids=$(pvesh get /cluster/resources --type vm 2>/dev/null | grep -o '"vmid":[0-9]*' | cut -d':' -f2 | sort -n | tr '\n' ' ')
@@ -474,6 +483,16 @@ main() {
     # Obtener lista de almacenamientos disponibles
     declare -A storage_options
     list_storages
+    
+    # Solicitar selección de almacenamiento
+    read -p "$(echo -e "${BLUE}Selecciona un almacenamiento (introduce el número): ${NC}")" storage_selection
+    validate_number "$storage_selection" "La selección de almacenamiento debe ser un número"
+    if [ -z "${storage_options[$storage_selection]}" ]; then
+        error_exit "Selección de almacenamiento inválida"
+    fi
+    selected_storage=${storage_options[$storage_selection]}
+    selected_storage_escaped=$(escape_spaces "$selected_storage")
+    success_msg "Has seleccionado el almacenamiento: $selected_storage"
     
     echo ""
     echo -e "${CYAN}========= CONFIGURACIÓN DEL CONTENEDOR LXC ==========${NC}"
@@ -550,7 +569,7 @@ main() {
     fi
     
     # Crear el contenedor LXC
-    create_lxc_container "$vm_id" "$hostname" "$password" "$memory" "$disk" "$cores" "$ip_address" "$gateway" "$selected_storage"
+    create_lxc_container "$vm_id" "$hostname" "$password" "$memory" "$disk" "$cores" "$ip_address" "$gateway" "$selected_storage_escaped"
     
     # Instalar Odoo
     install_odoo "$vm_id" "$odoo_version" "$odoo_db_password" "$odoo_admin_password"
