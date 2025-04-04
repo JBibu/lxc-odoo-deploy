@@ -47,6 +47,16 @@ check_command() {
     command -v "$1" >/dev/null 2>&1 || { error_exit "El comando '$1' no está instalado. Instálalo e inténtalo de nuevo."; }
 }
 
+# Verificar comandos de Proxmox necesarios
+check_proxmox_commands() {
+    # Verificar comandos esenciales de Proxmox
+    for cmd in pvesh pct pveam; do
+        if ! command -v "$cmd" >/dev/null 2>&1; then
+            error_exit "El comando '$cmd' no está disponible. Este script debe ejecutarse en un servidor Proxmox VE."
+        fi
+    done
+}
+
 # Función para validar entradas numéricas
 validate_number() {
     local input=$1
@@ -86,9 +96,11 @@ validate_not_empty() {
 
 # Función para instalar dependencias necesarias
 install_dependencies() {
-    info_msg "Verificando e instalando dependencias necesarias..."
+    info_msg "Verificando e instalando dependencias necesarias en el host..."
     
-    local deps=("pveapi" "curl" "jq" "wget" "python3" "python3-pip")
+    # En Proxmox, las herramientas de la API ya están instaladas
+    # Solo necesitamos asegurarnos de que jq y curl estén disponibles
+    local deps=("jq" "curl")
     local missing_deps=()
     
     for dep in "${deps[@]}"; do
@@ -283,10 +295,9 @@ install_odoo() {
     local odoo_install_script=$(cat <<EOF
 #!/bin/bash
 
-# Actualizar el sistema
 apt-get update && apt-get upgrade -y
 
-# Instalar dependencias
+# Instalar dependencias en el contenedor
 apt-get install -y python3-pip python3-dev python3-venv build-essential wget git libpq-dev poppler-utils antiword libldap2-dev libsasl2-dev libxslt1-dev node-less xfonts-75dpi xfonts-base
 
 # Instalar wkhtmltopdf para reportes en PDF
@@ -442,6 +453,9 @@ main() {
     
     # Verificar que se está ejecutando como root
     check_root
+    
+    # Verificar los comandos de Proxmox
+    check_proxmox_commands
     
     # Verificar e instalar dependencias
     install_dependencies
