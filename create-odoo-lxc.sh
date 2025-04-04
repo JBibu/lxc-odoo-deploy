@@ -1,429 +1,560 @@
 #!/bin/bash
-# Script interactivo para crear un contenedor LXC con Ubuntu 24.04 en Proxmox e instalar Odoo 18
-# Autor: Claude
-# Fecha: 02/04/2025
 
-# ======= COLORES =======
+#######################################################################
+#                                                                     #
+#  Script de Instalación de LXC Ubuntu 24.04 con Odoo en Proxmox      #
+#                                                                     #
+#######################################################################
+
+# Colores para mejorar la interfaz de usuario
 RED='\033[0;31m'
 GREEN='\033[0;32m'
-YELLOW='\033[0;33m'
+YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
-MAGENTA='\033[0;35m'
 CYAN='\033[0;36m'
-BOLD='\033[1m'
 NC='\033[0m' # No Color
 
-# ======= FUNCIONES =======
-function print_header() {
-    clear
-    echo -e "${BOLD}${CYAN}"
-    echo "╔═══════════════════════════════════════════════════════════════╗"
-    echo "║                                                               ║"
-    echo "║   Instalación de Contenedor LXC con Ubuntu 24.04 + Odoo 18    ║"
-    echo "║                                                               ║"
-    echo "╚═══════════════════════════════════════════════════════════════╝"
-    echo -e "${NC}"
+# Función para mostrar mensajes de error y salir
+error_exit() {
+    echo -e "${RED}ERROR: $1${NC}" >&2
+    exit 1
 }
 
-function print_section() {
-    echo -e "\n${BOLD}${MAGENTA}=== $1 ===${NC}\n"
+# Función para mostrar mensajes informativos
+info_msg() {
+    echo -e "${BLUE}INFO: $1${NC}"
 }
 
-function print_info() {
-    echo -e "${BLUE}ℹ️ $1${NC}"
+# Función para mostrar mensajes de éxito
+success_msg() {
+    echo -e "${GREEN}ÉXITO: $1${NC}"
 }
 
-function print_success() {
-    echo -e "${GREEN}✅ $1${NC}"
+# Función para mostrar mensajes de advertencia
+warn_msg() {
+    echo -e "${YELLOW}ADVERTENCIA: $1${NC}"
 }
 
-function print_warning() {
-    echo -e "${YELLOW}⚠️ $1${NC}"
-}
-
-function print_error() {
-    echo -e "${RED}❌ $1${NC}"
-}
-
-function ask_with_default() {
-    local prompt="$1"
-    local default="$2"
-    local var_name="$3"
-    
-    read -p "$(echo -e ${CYAN}${prompt} [${default}]: ${NC})" input
-    # Si el input está vacío, usa el valor por defecto
-    if [ -z "$input" ]; then
-        input="$default"
+# Función para comprobar si se está ejecutando como root
+check_root() {
+    if [ "$EUID" -ne 0 ]; then
+        error_exit "Este script debe ejecutarse como root. Utiliza 'sudo $0'"
     fi
-    # Asigna el valor a la variable pasada por nombre
-    eval "$var_name='$input'"
 }
 
-function show_help() {
-    print_header
-    echo -e "Este script interactivo te ayudará a crear un contenedor LXC con Ubuntu 24.04"
-    echo -e "en tu servidor Proxmox y luego instalar Odoo 18 Community Edition."
-    echo
-    echo -e "${BOLD}Requisitos:${NC}"
-    echo -e "- Tener un servidor Proxmox funcionando"
-    echo -e "- Acceso root al servidor Proxmox"
-    echo -e "- Conexión a Internet"
-    echo
-    echo -e "${BOLD}Proceso:${NC}"
-    echo -e "1. Configuración del contenedor LXC"
-    echo -e "2. Creación del contenedor en Proxmox"
-    echo -e "3. Instalación de dependencias"
-    echo -e "4. Configuración de PostgreSQL"
-    echo -e "5. Instalación de Odoo 18"
-    echo -e "6. Configuración del servicio"
-    echo
-    echo -e "${BOLD}Notas:${NC}"
-    echo -e "- El script utilizará valores predeterminados que puedes modificar"
-    echo -e "- Asegúrate de tener suficiente espacio en disco y memoria"
-    echo -e "- La instalación puede tardar entre 5-15 minutos según tu conexión"
-    echo
-    read -p "$(echo -e ${BOLD}Presiona Enter para continuar...${NC})"
+# Función para verificar la existencia de un comando
+check_command() {
+    command -v "$1" >/dev/null 2>&1 || { error_exit "El comando '$1' no está instalado. Instálalo e inténtalo de nuevo."; }
 }
 
-# ======= COMPROBAR PRIVILEGIOS =======
-if [ "$(id -u)" -ne 0 ]; then
-    print_error "Este script debe ejecutarse como root"
-    exit 1
-fi
+# Función para validar entradas numéricas
+validate_number() {
+    local input=$1
+    local message=$2
+    
+    if ! [[ "$input" =~ ^[0-9]+$ ]]; then
+        error_exit "$message"
+    fi
+}
 
-# ======= COMPROBAR QUE ESTAMOS EN PROXMOX Y ESTABLECER RUTA PCT =======
-if [ -f /usr/sbin/pct ]; then
-    PCT_CMD="/usr/sbin/pct"
-elif [ -f /usr/bin/pct ]; then
-    PCT_CMD="/usr/bin/pct"
-else
-    print_error "Este script debe ejecutarse en un servidor Proxmox"
-    print_info "Verificando que pct esté instalado en el sistema"
-    exit 1
-fi
-print_success "Detectado comando pct en: $PCT_CMD"
+# Función para validar direcciones IP
+validate_ip() {
+    local ip=$1
+    local regex='^([0-9]{1,3}\.){3}[0-9]{1,3}$'
+    
+    if ! [[ $ip =~ $regex ]]; then
+        error_exit "Dirección IP inválida: $ip"
+    fi
+    
+    IFS='.' read -r -a octets <<< "$ip"
+    for octet in "${octets[@]}"; do
+        if [[ $octet -gt 255 ]]; then
+            error_exit "Dirección IP inválida: $ip (octeto $octet > 255)"
+        fi
+    done
+}
 
-# ======= MOSTRAR AYUDA =======
-show_help
+# Función para validar entradas de texto no vacías
+validate_not_empty() {
+    local input=$1
+    local name=$2
+    
+    if [ -z "$input" ]; then
+        error_exit "$name no puede estar vacío"
+    fi
+}
 
-# ======= CONFIGURACIÓN INTERACTIVA =======
-print_header
-print_section "CONFIGURACIÓN DEL CONTENEDOR"
+# Función para instalar dependencias necesarias
+install_dependencies() {
+    info_msg "Verificando e instalando dependencias necesarias..."
+    
+    local deps=("pveapi" "curl" "jq" "wget" "python3" "python3-pip")
+    local missing_deps=()
+    
+    for dep in "${deps[@]}"; do
+        if ! command -v "$dep" >/dev/null 2>&1; then
+            missing_deps+=("$dep")
+        fi
+    done
+    
+    if [ ${#missing_deps[@]} -gt 0 ]; then
+        warn_msg "Se instalarán las siguientes dependencias: ${missing_deps[*]}"
+        apt update || error_exit "No se pudo actualizar los repositorios"
+        apt install -y "${missing_deps[@]}" || error_exit "No se pudieron instalar las dependencias"
+        success_msg "Dependencias instaladas correctamente"
+    else
+        success_msg "Todas las dependencias están instaladas"
+    fi
+}
 
-# Valores por defecto
-DEFAULT_CONTAINER_ID="100"
-DEFAULT_CONTAINER_NAME="odoo-server"
-DEFAULT_CONTAINER_PASSWORD="OdooSecurePassword"
-DEFAULT_STORAGE="local-lvm"
-DEFAULT_MEMORY="4096"
-DEFAULT_CORES="2"
-DEFAULT_DISK_SIZE="20"
-DEFAULT_NETWORK="vmbr0"
-DEFAULT_IP_ADDRESS="dhcp"
-DEFAULT_GATEWAY="auto"
-DEFAULT_ODOO_DB_PASSWORD="OdooDBPassword"
+# Función para listar almacenamientos disponibles en Proxmox
+list_storages() {
+    info_msg "Obteniendo almacenamientos disponibles..."
+    local storages=$(pvesh get /nodes/$(hostname)/storage --type=storage | grep -v "images\|snippets\|vztmp" | jq -r '.[] | select(.active==1) | .storage')
+    
+    if [ -z "$storages" ]; then
+        error_exit "No se encontraron almacenamientos disponibles en el host"
+    fi
+    
+    echo -e "${BLUE}Almacenamientos disponibles:${NC}"
+    local i=1
+    for storage in $storages; do
+        # Verificar si el almacenamiento es apto para contenedores
+        local content=$(pvesh get /nodes/$(hostname)/storage/$storage | jq -r '.content')
+        if [[ "$content" == *"rootdir"* ]] || [[ "$content" == *"images"* ]] || [[ "$content" == *"vztmpl"* ]]; then
+            echo "$i) $storage"
+            storage_options[$i]=$storage
+            i=$((i+1))
+        fi
+    done
+    
+    if [ $i -eq 1 ]; then
+        error_exit "No se encontraron almacenamientos adecuados para contenedores LXC"
+    fi
+}
 
-# Preguntar al usuario
-ask_with_default "ID del contenedor" "$DEFAULT_CONTAINER_ID" "CONTAINER_ID"
-ask_with_default "Nombre del contenedor" "$DEFAULT_CONTAINER_NAME" "CONTAINER_NAME"
-ask_with_default "Contraseña del contenedor" "$DEFAULT_CONTAINER_PASSWORD" "CONTAINER_PASSWORD"
-ask_with_default "Almacenamiento" "$DEFAULT_STORAGE" "STORAGE"
-ask_with_default "Memoria RAM (MB)" "$DEFAULT_MEMORY" "MEMORY"
-ask_with_default "Núcleos de CPU" "$DEFAULT_CORES" "CORES"
-ask_with_default "Tamaño del disco (GB)" "$DEFAULT_DISK_SIZE" "DISK_SIZE"
-ask_with_default "Interfaz de red" "$DEFAULT_NETWORK" "NETWORK"
+# Función para verificar y habilitar el almacenamiento de templates
+check_template_storage() {
+    local storage=$1
+    info_msg "Verificando si el almacenamiento '$storage' soporta templates de contenedores..."
+    
+    # Comprobar si el almacenamiento tiene habilitado el contenido vztmpl
+    local content=$(pvesh get /nodes/$(hostname)/storage/$storage | jq -r '.content')
+    
+    if [[ "$content" != *"vztmpl"* ]]; then
+        warn_msg "El almacenamiento '$storage' no tiene habilitado el soporte para templates de contenedores"
+        read -p "$(echo -e "${YELLOW}¿Deseas habilitarlo? (s/n): ${NC}")" enable_templates
+        
+        if [[ "$enable_templates" =~ ^[Ss]$ ]]; then
+            info_msg "Habilitando soporte para templates en almacenamiento '$storage'..."
+            
+            # Añadir 'vztmpl' al contenido del almacenamiento
+            local new_content="$content,vztmpl"
+            pvesh set /nodes/$(hostname)/storage/$storage --content "$new_content" > /dev/null 2>&1
+            
+            if [ $? -eq 0 ]; then
+                success_msg "Soporte para templates habilitado correctamente en '$storage'"
+                return 0
+            else
+                error_exit "No se pudo habilitar el soporte para templates en '$storage'"
+            fi
+        else
+            warn_msg "No se habilitó el soporte para templates. Se utilizará el almacenamiento local por defecto para descargar templates."
+            return 1
+        fi
+    else
+        success_msg "El almacenamiento '$storage' tiene soporte para templates de contenedores"
+        return 0
+    fi
+}
 
-# Para la IP, ofrecer DHCP o manual
-echo -e "${CYAN}Configuración de red:${NC}"
-echo -e "1) DHCP (automático)"
-echo -e "2) IP estática"
-read -p "$(echo -e ${CYAN}Selecciona una opción [1]: ${NC})" ip_option
-ip_option=${ip_option:-1}
+# Función para crear un contenedor LXC
+create_lxc_container() {
+    local vm_id=$1
+    local hostname=$2
+    local password=$3
+    local memory=$4
+    local disk=$5
+    local cores=$6
+    local ip_address=$7
+    local gateway=$8
+    local storage=$9
+    
+    info_msg "Creando contenedor LXC con Ubuntu 24.04..."
+    
+    # Verificar si el template storage está habilitado
+    local template_storage_enabled=false
+    local template_storage=$storage
+    
+    if check_template_storage "$storage"; then
+        template_storage_enabled=true
+    else
+        template_storage="local"
+        warn_msg "Se utilizará el almacenamiento 'local' para descargar el template"
+    fi
+    
+    # Descargar la plantilla si no existe
+    local template_name="ubuntu-24.04-standard_24.04-1_amd64.tar.gz"
+    local template_exists=$(pveam list "$template_storage" 2>/dev/null | grep -c "$template_name")
+    
+    if [ "$template_exists" -eq 0 ]; then
+        info_msg "Descargando plantilla de Ubuntu 24.04 en almacenamiento '$template_storage'..."
+        pveam update >/dev/null 2>&1 || error_exit "No se pudo actualizar la lista de plantillas"
+        
+        local template_available=$(pveam available | grep -c "ubuntu-24.04-standard")
+        if [ "$template_available" -eq 0 ]; then
+            error_exit "No se encontró la plantilla de Ubuntu 24.04. Verifica que Proxmox esté actualizado."
+        fi
+        
+        pveam download "$template_storage" "$template_name" >/dev/null 2>&1 || error_exit "No se pudo descargar la plantilla en '$template_storage'"
+        success_msg "Plantilla descargada correctamente en '$template_storage'"
+    else
+        success_msg "Ya existe una plantilla de Ubuntu 24.04 en '$template_storage'"
+    fi
+    
+    # Verificar si el ID de VM ya existe (comprobación más robusta)
+    info_msg "Verificando disponibilidad del ID $vm_id..."
+    if pvesh get /cluster/resources --type vm 2>/dev/null | grep -q "\"vmid\":$vm_id"; then
+        error_exit "Ya existe un contenedor o VM con ID $vm_id. Elige otro ID."
+    fi
+    
+    # Segunda comprobación por si acaso
+    if pvesh get /nodes/$(hostname)/lxc/$vm_id/status/current 2>/dev/null | grep -q "status"; then
+        error_exit "Ya existe un contenedor con ID $vm_id. Elige otro ID."
+    fi
+    
+    # Crear el contenedor
+    info_msg "Creando contenedor con ID $vm_id en almacenamiento '$storage'..."
+    pvesh create /nodes/$(hostname)/lxc \
+        -vmid "$vm_id" \
+        -hostname "$hostname" \
+        -password "$password" \
+        -ostype "ubuntu" \
+        -rootfs "$storage:$disk" \
+        -memory "$memory" \
+        -cores "$cores" \
+        -net0 "name=eth0,bridge=vmbr0,ip=$ip_address/24,gw=$gateway" \
+        -onboot 1 \
+        -start 1 \
+        -unprivileged 1 \
+        -features "nesting=1" \
+        -storage "$storage" >/dev/null 2>&1 || error_exit "No se pudo crear el contenedor"
+    
+    success_msg "Contenedor creado correctamente"
+    
+    # Esperar a que el contenedor esté en funcionamiento
+    info_msg "Esperando a que el contenedor esté en funcionamiento..."
+    local timeout=60
+    local counter=0
+    
+    while [ $counter -lt $timeout ]; do
+        if pvesh get /nodes/$(hostname)/lxc/$vm_id/status/current | jq -r '.status' | grep -q "running"; then
+            break
+        fi
+        sleep 5
+        counter=$((counter + 5))
+        echo -ne "${CYAN}Esperando al contenedor: $counter segundos de $timeout${NC}\r"
+    done
+    
+    if [ $counter -ge $timeout ]; then
+        error_exit "Tiempo de espera agotado. El contenedor no pudo iniciarse."
+    fi
+    
+    echo ""
+    success_msg "Contenedor en funcionamiento"
+    
+    # Esperar un poco más para que los servicios del sistema inicien completamente
+    info_msg "Esperando a que los servicios del sistema inicien..."
+    sleep 20
+    
+    success_msg "Contenedor LXC con Ubuntu 24.04 creado e iniciado correctamente"
+}
 
-if [ "$ip_option" == "1" ]; then
-    IP_ADDRESS="dhcp"
-    GATEWAY="auto"
-else
-    ask_with_default "Dirección IP (con máscara, ej: 192.168.1.100/24)" "192.168.1.100/24" "IP_ADDRESS"
-    ask_with_default "Puerta de enlace" "192.168.1.1" "GATEWAY"
-fi
-
-# Contraseña para la base de datos
-ask_with_default "Contraseña para la base de datos de Odoo" "$DEFAULT_ODOO_DB_PASSWORD" "ODOO_DB_PASSWORD"
-
-# ======= CONFIRMAR CONFIGURACIÓN =======
-print_section "RESUMEN DE CONFIGURACIÓN"
-echo -e "${BOLD}Contenedor LXC:${NC}"
-echo -e "ID: $CONTAINER_ID"
-echo -e "Nombre: $CONTAINER_NAME"
-echo -e "Memoria: $MEMORY MB"
-echo -e "CPUs: $CORES"
-echo -e "Almacenamiento: $STORAGE"
-echo -e "Tamaño de disco: $DISK_SIZE GB"
-echo -e "Red: $NETWORK"
-if [ "$IP_ADDRESS" == "dhcp" ]; then
-    echo -e "IP: DHCP (automática)"
-else
-    echo -e "IP: $IP_ADDRESS"
-    echo -e "Gateway: $GATEWAY"
-fi
-
-echo -e "\n${BOLD}Odoo:${NC}"
-echo -e "Versión: 18.0 Community Edition"
-echo -e "Base de datos: PostgreSQL"
-
-read -p "$(echo -e ${YELLOW}¿Confirmas esta configuración? (s/n): ${NC})" confirm
-if [[ ! "$confirm" =~ ^[Ss]$ ]]; then
-    print_error "Instalación cancelada por el usuario"
-    exit 1
-fi
-
-# ======= CREAR CONTENEDOR LXC =======
-print_section "CREANDO CONTENEDOR LXC"
-
-# Descargar la plantilla si no existe
-if [ ! -f /var/lib/vz/template/cache/ubuntu-24.04-standard_24.04-1_amd64.tar.zst ]; then
-    print_info "Descargando plantilla de Ubuntu 24.04..."
-    pveam update
-    pveam available | grep ubuntu-24.04
-    pveam download local ubuntu-24.04-standard_24.04-1_amd64.tar.zst
-fi
-
-# Preparar comando de creación del contenedor
-create_cmd="$PCT_CMD create $CONTAINER_ID local:vztmpl/ubuntu-24.04-standard_24.04-1_amd64.tar.zst \
-  --hostname $CONTAINER_NAME \
-  --memory $MEMORY \
-  --cores $CORES \
-  --swap 512 \
-  --storage $STORAGE \
-  --rootfs $STORAGE:$DISK_SIZE \
-  --ostype ubuntu \
-  --password $CONTAINER_PASSWORD \
-  --unprivileged 1 \
-  --features nesting=1"
-
-# Añadir configuración de red
-if [ "$IP_ADDRESS" == "dhcp" ]; then
-    create_cmd="$create_cmd --net0 name=eth0,bridge=$NETWORK,ip=dhcp"
-else
-    create_cmd="$create_cmd --net0 name=eth0,bridge=$NETWORK,ip=$IP_ADDRESS,gw=$GATEWAY"
-fi
-
-# Crear el contenedor
-print_info "Creando el contenedor LXC..."
-eval $create_cmd
-
-# Comprobar si se creó correctamente
-if [ $? -ne 0 ]; then
-    print_error "Error al crear el contenedor LXC"
-    exit 1
-fi
-
-print_success "Contenedor LXC creado con éxito"
-
-# Iniciar el contenedor
-print_info "Iniciando el contenedor..."
-$PCT_CMD start $CONTAINER_ID
-
-# Esperar a que el contenedor esté listo
-print_info "Esperando a que el contenedor se inicie completamente..."
-sleep 20
-
-# ======= CONFIGURAR EL CONTENEDOR E INSTALAR ODOO =======
-print_section "PREPARANDO SCRIPT DE INSTALACIÓN DE ODOO"
-
-# Crear script para ejecutar dentro del contenedor
-cat > /tmp/odoo_install.sh << 'EOL'
+# Función para instalar Odoo en el contenedor
+install_odoo() {
+    local vm_id=$1
+    local odoo_version=$2
+    local odoo_db_password=$3
+    local odoo_admin_password=$4
+    
+    info_msg "Instalando Odoo $odoo_version en el contenedor $vm_id..."
+    
+    # Preparar el script de instalación de Odoo
+    local odoo_install_script=$(cat <<EOF
 #!/bin/bash
 
-# Definir colores para el script dentro del contenedor
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[0;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-BOLD='\033[1m'
-NC='\033[0m' # No Color
+# Actualizar el sistema
+apt-get update && apt-get upgrade -y
 
-function print_step() {
-    echo -e "\n${BOLD}${CYAN}>>> $1${NC}\n"
-}
+# Instalar dependencias
+apt-get install -y python3-pip python3-dev python3-venv build-essential wget git libpq-dev poppler-utils antiword libldap2-dev libsasl2-dev libxslt1-dev node-less xfonts-75dpi xfonts-base
 
-function print_success() {
-    echo -e "${GREEN}✅ $1${NC}"
-}
-
-function print_info() {
-    echo -e "${BLUE}ℹ️ $1${NC}"
-}
-
-# Paso 1: Actualizar el servidor
-print_step "Paso 1: Actualizando el servidor"
-apt-get update
-apt-get upgrade -y
-print_success "Servidor actualizado"
-
-# Paso 2: Asegurar el servidor
-print_step "Paso 2: Instalando paquetes de seguridad"
-apt-get install -y openssh-server fail2ban
-systemctl start fail2ban
-systemctl enable fail2ban
-print_success "Fail2Ban instalado y configurado"
-
-# Paso 3: Instalar paquetes y librerías necesarias
-print_step "Paso 3: Instalando paquetes y librerías necesarias"
-apt-get install -y python3-pip python3-dev libxml2-dev libxslt1-dev zlib1g-dev libsasl2-dev libldap2-dev build-essential libssl-dev libffi-dev libmysqlclient-dev libjpeg-dev libpq-dev libjpeg8-dev liblcms2-dev libblas-dev libatlas-base-dev
-apt-get install -y npm
-ln -sf /usr/bin/nodejs /usr/bin/node
-npm install -g less less-plugin-clean-css
-apt-get install -y node-less
-print_success "Paquetes y librerías instalados"
-
-# Paso 4: Configurar PostgreSQL
-print_step "Paso 4: Configurando PostgreSQL"
-apt-get install -y postgresql
-su - postgres -c "createuser --createdb --username postgres --no-createrole --superuser --pwprompt odoo18" << EOF
-$ODOO_DB_PASSWORD
-$ODOO_DB_PASSWORD
-EOF
-print_success "PostgreSQL instalado y configurado"
-
-# Paso 5: Crear usuario del sistema para Odoo
-print_step "Paso 5: Creando usuario del sistema para Odoo"
-adduser --system --home=/opt/odoo18 --group odoo18
-print_success "Usuario odoo18 creado"
-
-# Paso 6: Instalar Git y clonar el repositorio de Odoo
-print_step "Paso 6: Clonando Odoo desde GitHub"
-apt-get install -y git
-su - odoo18 -s /bin/bash -c "git clone https://www.github.com/odoo/odoo --depth 1 --branch 18.0 --single-branch ."
-print_success "Repositorio de Odoo clonado"
-
-# Paso 7: Instalar entorno virtual y dependencias Python
-print_step "Paso 7: Configurando entorno virtual Python"
-apt-get install -y python3-venv
-python3 -m venv /opt/odoo18/venv
-cd /opt/odoo18
-source venv/bin/activate
-pip install -r requirements.txt
-
-# Paso 8: Instalar wkhtmltopdf y dependencias
-print_step "Paso 8: Instalando wkhtmltopdf y dependencias"
-apt-get install -y xfonts-75dpi
-wget https://github.com/wkhtmltopdf/wkhtmltopdf/releases/download/0.12.5/wkhtmltox_0.12.5-1.bionic_amd64.deb
-dpkg -i wkhtmltox_0.12.5-1.bionic_amd64.deb
+# Instalar wkhtmltopdf para reportes en PDF
+wget https://github.com/wkhtmltopdf/packaging/releases/download/0.12.6.1-2/wkhtmltox_0.12.6.1-2.jammy_amd64.deb
+dpkg -i wkhtmltox_0.12.6.1-2.jammy_amd64.deb
 apt-get install -f -y
-print_success "wkhtmltopdf instalado"
+rm wkhtmltox_0.12.6.1-2.jammy_amd64.deb
 
-# Paso 9: Configurar archivo de configuración
-print_step "Paso 9: Configurando Odoo"
-deactivate
-mkdir -p /etc
-mkdir -p /var/log/odoo
-touch /etc/odoo18.conf
-cat > /etc/odoo18.conf << EOF
-[options]
-; This is the password that allows database operations:
-admin_passwd = $ODOO_DB_PASSWORD
-db_host = localhost
-db_port = 5432
-db_user = odoo18
-db_password = $ODOO_DB_PASSWORD
-addons_path = /opt/odoo18/addons
-default_productivity_apps = True
-logfile = /var/log/odoo/odoo18.log
-EOF
+# Crear usuario Odoo
+adduser --system --quiet --shell=/bin/bash --home=/opt/odoo --gecos 'Odoo' --group odoo
 
-chown odoo18: /etc/odoo18.conf
-chmod 640 /etc/odoo18.conf
-chown odoo18:root /var/log/odoo
-print_success "Archivo de configuración de Odoo creado"
-
-# Paso 10: Configurar Odoo como servicio
-print_step "Paso 10: Configurando Odoo como servicio del sistema"
-cat > /etc/systemd/system/odoo18.service << EOF
-[Unit]
-Description=Odoo18
-Documentation=http://www.odoo.com
-[Service]
-Type=simple
-User=odoo18
-ExecStart=/opt/odoo18/venv/bin/python3 /opt/odoo18/odoo-bin -c /etc/odoo18.conf
-[Install]
-WantedBy=default.target
-EOF
-
-chmod 755 /etc/systemd/system/odoo18.service
-chown root: /etc/systemd/system/odoo18.service
-systemctl daemon-reload
-systemctl start odoo18.service
-systemctl enable odoo18.service
-print_success "Servicio de Odoo configurado e iniciado"
-
-# Configurar firewall (si está activo)
-print_step "Paso 11: Configurando firewall"
-apt-get install -y ufw
-ufw allow 22/tcp
-ufw allow 8069/tcp
-ufw allow 8072/tcp
-ufw --force enable
-print_success "Firewall configurado"
-
-# Obtenemos la IP
-IP_ADDRESS=$(hostname -I | awk '{print $1}')
-
-# Mostrar información de acceso
-echo -e "\n${BOLD}${GREEN}=============================================${NC}"
-echo -e "${BOLD}${GREEN}     ¡INSTALACIÓN DE ODOO 18 COMPLETADA!     ${NC}"
-echo -e "${BOLD}${GREEN}=============================================${NC}"
-echo -e "${BOLD}Accede a Odoo en:${NC} http://$IP_ADDRESS:8069"
-echo -e "${BOLD}Base de datos:${NC} PostgreSQL"
-echo -e "${BOLD}Usuario de PostgreSQL:${NC} odoo18"
-echo -e "${BOLD}Contraseña de PostgreSQL:${NC} $ODOO_DB_PASSWORD"
-echo -e "${BOLD}Ver logs:${NC} sudo tail -f /var/log/odoo/odoo18.log"
-echo -e "${BOLD}Reiniciar Odoo:${NC} sudo systemctl restart odoo18.service"
-echo -e "${BOLD}${GREEN}=============================================${NC}\n"
-EOL
-
-# Enviar el script al contenedor
-print_info "Enviando script de instalación al contenedor..."
-$PCT_CMD push $CONTAINER_ID /tmp/odoo_install.sh /tmp/odoo_install.sh
-
-# Ejecutar el script dentro del contenedor
-print_info "Ejecutando script de instalación dentro del contenedor..."
-$PCT_CMD exec $CONTAINER_ID -- bash -c "chmod +x /tmp/odoo_install.sh && ODOO_DB_PASSWORD='$ODOO_DB_PASSWORD' /tmp/odoo_install.sh"
-
-# Obtener la IP del contenedor
-if [ "$IP_ADDRESS" == "dhcp" ]; then
-    CONTAINER_IP=$($PCT_CMD exec $CONTAINER_ID -- ip -4 addr show eth0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}')
-else
-    CONTAINER_IP=${IP_ADDRESS%/*}
+# Instalar PostgreSQL si no está instalado
+if ! command -v psql &> /dev/null; then
+    apt-get install -y postgresql postgresql-client
 fi
 
-print_section "INSTALACIÓN FINALIZADA"
-echo -e "${BOLD}${GREEN}┌───────────────────────────────────────────────────────────┐${NC}"
-echo -e "${BOLD}${GREEN}│                                                           │${NC}"
-echo -e "${BOLD}${GREEN}│  ¡El contenedor LXC con Odoo 18 ha sido creado con éxito! │${NC}"
-echo -e "${BOLD}${GREEN}│                                                           │${NC}"
-echo -e "${BOLD}${GREEN}└───────────────────────────────────────────────────────────┘${NC}"
-echo
-echo -e "${BOLD}INFORMACIÓN DEL CONTENEDOR:${NC}"
-echo -e "ID: ${BOLD}$CONTAINER_ID${NC}"
-echo -e "Nombre: ${BOLD}$CONTAINER_NAME${NC}"
-echo -e "IP: ${BOLD}$CONTAINER_IP${NC}"
-echo
-echo -e "${BOLD}ACCESO A ODOO:${NC}"
-echo -e "URL: ${BOLD}http://$CONTAINER_IP:8069${NC}"
-echo -e "Base de datos: ${BOLD}PostgreSQL${NC}"
-echo -e "Usuario PostgreSQL: ${BOLD}odoo18${NC}"
-echo -e "Contraseña PostgreSQL: ${BOLD}$ODOO_DB_PASSWORD${NC}"
-echo
-echo -e "${BOLD}COMANDOS ÚTILES:${NC}"
-echo -e "Iniciar contenedor: ${CYAN}$PCT_CMD start $CONTAINER_ID${NC}"
-echo -e "Detener contenedor: ${CYAN}$PCT_CMD stop $CONTAINER_ID${NC}"
-echo -e "Entrar en el contenedor: ${CYAN}$PCT_CMD enter $CONTAINER_ID${NC}"
-echo -e "Ver logs de Odoo: ${CYAN}$PCT_CMD exec $CONTAINER_ID -- tail -f /var/log/odoo/odoo18.log${NC}"
-echo -e "Reiniciar Odoo: ${CYAN}$PCT_CMD exec $CONTAINER_ID -- systemctl restart odoo18.service${NC}"
-echo
-print_warning "Guarda esta información en un lugar seguro."
-echo
+# Crear usuario de base de datos para Odoo
+su - postgres -c "createuser -s odoo" || true
+su - postgres -c "psql -c \"ALTER USER odoo WITH PASSWORD '$odoo_db_password'\"" || true
+
+# Descargar Odoo
+su - odoo -c "git clone --depth 1 --branch $odoo_version https://www.github.com/odoo/odoo /opt/odoo/odoo-server"
+
+# Crear directorio para módulos personalizados
+mkdir -p /opt/odoo/custom-addons
+chown -R odoo:odoo /opt/odoo/custom-addons
+
+# Crear entorno virtual Python para Odoo
+su - odoo -c "python3 -m venv /opt/odoo/venv"
+su - odoo -c "/opt/odoo/venv/bin/pip install wheel"
+su - odoo -c "cd /opt/odoo/odoo-server && /opt/odoo/venv/bin/pip install -r requirements.txt"
+
+# Crear archivo de configuración de Odoo
+cat > /etc/odoo.conf << EOL
+[options]
+; Ruta al directorio de addons de Odoo
+addons_path = /opt/odoo/odoo-server/addons,/opt/odoo/custom-addons
+
+; Conexión a la base de datos PostgreSQL
+db_host = localhost
+db_port = 5432
+db_user = odoo
+db_password = $odoo_db_password
+admin_passwd = $odoo_admin_password
+
+; Configuración general
+data_dir = /opt/odoo/data
+logfile = /var/log/odoo/odoo.log
+xmlrpc_port = 8069
+proxy_mode = True
+EOL
+
+# Crear directorio para logs
+mkdir -p /var/log/odoo
+chown -R odoo:odoo /var/log/odoo
+
+# Crear servicio systemd para Odoo
+cat > /etc/systemd/system/odoo.service << EOL
+[Unit]
+Description=Odoo
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+User=odoo
+Group=odoo
+ExecStart=/opt/odoo/venv/bin/python3 /opt/odoo/odoo-server/odoo-bin -c /etc/odoo.conf
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOL
+
+# Recargar servicios systemd
+systemctl daemon-reload
+
+# Iniciar y habilitar Odoo en el arranque
+systemctl start odoo
+systemctl enable odoo
+
+# Instalar y configurar Nginx como proxy inverso
+apt-get install -y nginx
+
+cat > /etc/nginx/sites-available/odoo << EOL
+upstream odoo {
+    server 127.0.0.1:8069;
+}
+
+server {
+    listen 80;
+    server_name _;
+
+    proxy_read_timeout 720s;
+    proxy_connect_timeout 720s;
+    proxy_send_timeout 720s;
+
+    client_max_body_size 100M;
+
+    # Redirigir solicitudes a Odoo
+    location / {
+        proxy_pass http://odoo;
+        proxy_next_upstream error timeout invalid_header http_500 http_502 http_503 http_504;
+        proxy_redirect off;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+
+    # Servir archivos estáticos directamente
+    location ~* /web/static/ {
+        proxy_cache_valid 200 60m;
+        proxy_buffering on;
+        expires 864000;
+        proxy_pass http://odoo;
+    }
+}
+EOL
+
+# Activar el sitio de Nginx y reiniciar
+ln -sf /etc/nginx/sites-available/odoo /etc/nginx/sites-enabled/odoo
+rm -f /etc/nginx/sites-enabled/default
+systemctl restart nginx
+
+echo "Instalación de Odoo $odoo_version completada"
+echo "Puedes acceder a Odoo a través de http://tu-ip-servidor"
+echo "Usuario: admin"
+echo "Contraseña administrativa del sitio: $odoo_admin_password"
+echo "Contraseña de la base de datos: $odoo_db_password"
+EOF
+)
+    
+    # Ejecutar el script en el contenedor
+    echo "$odoo_install_script" > /tmp/odoo_install.sh
+    pct push "$vm_id" /tmp/odoo_install.sh /root/odoo_install.sh
+    pct exec "$vm_id" -- chmod +x /root/odoo_install.sh
+    pct exec "$vm_id" -- bash /root/odoo_install.sh
+    
+    # Eliminar el script temporal
+    rm /tmp/odoo_install.sh
+    
+    success_msg "Odoo $odoo_version instalado correctamente en el contenedor $vm_id"
+}
+
+# Función principal
+main() {
+    clear
+    echo -e "${CYAN}=========================================================${NC}"
+    echo -e "${CYAN}  INSTALACIÓN DE CONTENEDOR LXC CON UBUNTU 24.04 Y ODOO  ${NC}"
+    echo -e "${CYAN}=========================================================${NC}"
+    echo ""
+    
+    # Verificar que se está ejecutando como root
+    check_root
+    
+    # Verificar e instalar dependencias
+    install_dependencies
+    
+    # Verificar la conexión a Proxmox
+    check_proxmox
+    
+    # Verificar los IDs de contenedores existentes para informar al usuario
+    info_msg "Obteniendo lista de IDs de contenedores y VMs existentes..."
+    local existing_ids=$(pvesh get /cluster/resources --type vm 2>/dev/null | grep -o '"vmid":[0-9]*' | cut -d':' -f2 | sort -n | tr '\n' ' ')
+    if [ ! -z "$existing_ids" ]; then
+        warn_msg "IDs ya utilizados en este servidor: $existing_ids"
+        echo -e "${YELLOW}Por favor, elige un ID que no esté en esta lista.${NC}"
+    fi
+    
+    # Obtener lista de almacenamientos disponibles
+    declare -A storage_options
+    list_storages
+    
+    echo ""
+    echo -e "${CYAN}========= CONFIGURACIÓN DEL CONTENEDOR LXC ==========${NC}"
+    
+    # Solicitar información del contenedor
+    read -p "$(echo -e "${BLUE}ID del contenedor (100-999): ${NC}")" vm_id
+    validate_number "$vm_id" "El ID del contenedor debe ser un número entre 100 y 999"
+    if [ "$vm_id" -lt 100 ] || [ "$vm_id" -gt 999 ]; then
+        error_exit "El ID del contenedor debe estar entre 100 y 999"
+    fi
+    
+    read -p "$(echo -e "${BLUE}Nombre del contenedor: ${NC}")" hostname
+    validate_not_empty "$hostname" "El nombre del contenedor"
+    
+    read -p "$(echo -e "${BLUE}Contraseña del contenedor: ${NC}")" password
+    validate_not_empty "$password" "La contraseña del contenedor"
+    
+    read -p "$(echo -e "${BLUE}Memoria RAM (MB, mínimo 2048): ${NC}")" memory
+    validate_number "$memory" "La memoria debe ser un número entero"
+    if [ "$memory" -lt 2048 ]; then
+        error_exit "La memoria mínima recomendada para Odoo es 2048 MB"
+    fi
+    
+    read -p "$(echo -e "${BLUE}Espacio en disco (GB, mínimo 10): ${NC}")" disk
+    validate_number "$disk" "El espacio en disco debe ser un número entero"
+    if [ "$disk" -lt 10 ]; then
+        error_exit "El espacio en disco mínimo recomendado para Odoo es 10 GB"
+    fi
+    
+    read -p "$(echo -e "${BLUE}Número de núcleos: ${NC}")" cores
+    validate_number "$cores" "El número de núcleos debe ser un número entero"
+    if [ "$cores" -lt 1 ]; then
+        error_exit "El número de núcleos debe ser al menos 1"
+    fi
+    
+    read -p "$(echo -e "${BLUE}Dirección IP del contenedor: ${NC}")" ip_address
+    validate_ip "$ip_address"
+    
+    read -p "$(echo -e "${BLUE}Dirección IP del gateway: ${NC}")" gateway
+    validate_ip "$gateway"
+    
+    echo ""
+    echo -e "${CYAN}========= CONFIGURACIÓN DE ODOO ==========${NC}"
+    
+    # Configurar Odoo versión 18.0
+    odoo_version="18.0"
+    info_msg "Se instalará Odoo versión 18.0"
+    
+    read -p "$(echo -e "${BLUE}Contraseña para la base de datos Odoo: ${NC}")" odoo_db_password
+    validate_not_empty "$odoo_db_password" "La contraseña de la base de datos"
+    
+    read -p "$(echo -e "${BLUE}Contraseña administrativa de Odoo: ${NC}")" odoo_admin_password
+    validate_not_empty "$odoo_admin_password" "La contraseña administrativa"
+    
+    # Resumen de la configuración
+    echo ""
+    echo -e "${CYAN}========= RESUMEN DE LA CONFIGURACIÓN ==========${NC}"
+    echo -e "${BLUE}ID del contenedor:${NC} $vm_id"
+    echo -e "${BLUE}Nombre del contenedor:${NC} $hostname"
+    echo -e "${BLUE}Memoria RAM:${NC} $memory MB"
+    echo -e "${BLUE}Espacio en disco:${NC} $disk GB"
+    echo -e "${BLUE}Núcleos:${NC} $cores"
+    echo -e "${BLUE}Dirección IP:${NC} $ip_address"
+    echo -e "${BLUE}Gateway:${NC} $gateway"
+    echo -e "${BLUE}Almacenamiento:${NC} $selected_storage"
+    echo -e "${BLUE}Versión de Odoo:${NC} $odoo_version"
+    echo ""
+    
+    # Solicitar confirmación
+    read -p "$(echo -e "${YELLOW}¿Deseas proceder con la instalación? (s/n): ${NC}")" confirm
+    if [[ ! "$confirm" =~ ^[Ss]$ ]]; then
+        info_msg "Instalación cancelada por el usuario"
+        exit 0
+    fi
+    
+    # Crear el contenedor LXC
+    create_lxc_container "$vm_id" "$hostname" "$password" "$memory" "$disk" "$cores" "$ip_address" "$gateway" "$selected_storage"
+    
+    # Instalar Odoo
+    install_odoo "$vm_id" "$odoo_version" "$odoo_db_password" "$odoo_admin_password"
+    
+    # Información final
+    echo ""
+    echo -e "${CYAN}========= INSTALACIÓN COMPLETADA ==========${NC}"
+    echo -e "${GREEN}El contenedor LXC con Ubuntu 24.04 y Odoo $odoo_version ha sido instalado correctamente.${NC}"
+    echo -e "${GREEN}Acceso a Odoo:${NC}"
+    echo -e "${BLUE}URL:${NC} http://$ip_address"
+    echo -e "${BLUE}Usuario por defecto:${NC} admin"
+    echo -e "${BLUE}Contraseña administrativa:${NC} $odoo_admin_password"
+    echo -e "${BLUE}Contraseña de base de datos:${NC} $odoo_db_password"
+    echo ""
+    echo -e "${YELLOW}NOTA: Es posible que necesites esperar unos minutos para que Odoo termine de inicializarse completamente.${NC}"
+    echo -e "${YELLOW}Si no puedes acceder inmediatamente, intenta nuevamente en unos minutos.${NC}"
+    echo ""
+}
+
+# Ejecutar la función principal
+main
