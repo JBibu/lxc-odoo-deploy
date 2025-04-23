@@ -84,25 +84,36 @@ def show_storages(storage_data, storages):
         print("")
 
 # Create Odoo installation script
-def create_odoo_install_script(odoo_version, db_pass, admin_pass, odoo_user):
+def create_odoo_install_script(odoo_version, db_pass, odoo_user):
     script_content = f'''#!/bin/bash
 # Odoo {odoo_version} installation script
 info() {{ echo "[INFO] $1"; }}
 success() {{ echo "[SUCCESS] $1"; }}
 warning() {{ echo "[WARNING] $1"; }}
 error() {{ echo "[ERROR] $1"; }}
+progress() {{ echo "[PROGRESS] $1"; }}
 
 # Update system
 info "Updating system..."
 apt-get update && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y
+success "System updated"
 
 # Install requirements
 info "Installing dependencies..."
-apt-get install -y openssh-server fail2ban python3-pip python3-dev libxml2-dev libxslt1-dev zlib1g-dev libsasl2-dev libldap2-dev build-essential libssl-dev libffi-dev default-libmysqlclient-dev libjpeg-dev libpq-dev libjpeg8-dev liblcms2-dev libblas-dev libatlas-base-dev npm git postgresql python3-venv
+progress "Installing system packages (1/5)"
+apt-get install -y openssh-server fail2ban python3-pip python3-dev libxml2-dev libxslt1-dev zlib1g-dev libsasl2-dev
+progress "Installing development libraries (2/5)"
+apt-get install -y libldap2-dev build-essential libssl-dev libffi-dev default-libmysqlclient-dev libjpeg-dev libpq-dev
+progress "Installing image processing libraries (3/5)"
+apt-get install -y libjpeg8-dev liblcms2-dev libblas-dev libatlas-base-dev
+progress "Installing Node.js and npm (4/5)"
+apt-get install -y npm git postgresql python3-venv
+progress "Setting up fail2ban and Node.js (5/5)"
 systemctl enable fail2ban
 ln -sf /usr/bin/nodejs /usr/bin/node
 npm install -g less less-plugin-clean-css
 apt-get install -y node-less
+success "Dependencies installed"
 
 # Configure PostgreSQL
 info "Configuring PostgreSQL..."
@@ -110,68 +121,83 @@ su - postgres -c "createuser --createdb --username postgres --no-createrole --su
 {db_pass}
 {db_pass}
 EOF"
+success "PostgreSQL configured"
 
 # Create Odoo user
 info "Creating system user for Odoo..."
 adduser --system --home=/opt/{odoo_user} --group {odoo_user}
+success "System user created"
 
 # Clone Odoo
 info "Cloning Odoo repository..."
+progress "Downloading Odoo source code (this may take several minutes)..."
 su - {odoo_user} -s /bin/bash -c "git clone https://www.github.com/odoo/odoo --depth 1 --branch {odoo_version} --single-branch ."
+success "Odoo repository cloned"
 
 # Install Python dependencies
 info "Installing Python dependencies..."
-python3 -m venv /opt/{odoo_user}/venv
-cd /opt/{odoo_user}/
+python3 -m venv /opt/odoo18/venv
+cd /opt/odoo18/
 source venv/bin/activate
-pip install wheel && pip install -r requirements.txt
+progress "Installing wheel package..."
+pip install wheel
+progress "Installing Python requirements (this may take several minutes)..."
+pip install -r requirements.txt
+success "Python dependencies installed"
 
 # Install wkhtmltopdf
 info "Installing wkhtmltopdf..."
 apt-get install -y xfonts-75dpi xfonts-base
 cd /tmp
+progress "Downloading wkhtmltopdf..."
 wget -q https://github.com/wkhtmltopdf/packaging/releases/download/0.12.6.1-2/wkhtmltox_0.12.6.1-2.jammy_amd64.deb
+progress "Installing wkhtmltopdf package..."
 dpkg -i wkhtmltox_0.12.6.1-2.jammy_amd64.deb || apt-get install -f -y
 deactivate
+success "wkhtmltopdf installed"
 
 # Configure Odoo
 info "Configuring Odoo..."
 mkdir -p /var/log/odoo
-cat > /etc/${{odoo_user}}.conf << EOL
+progress "Creating configuration file..."
+cat > /etc/odoo18.conf << EOL
 [options]
-admin_passwd = {admin_pass}
+; This is the password that allows database operations:
+; admin_passwd = admin
 db_host = localhost
 db_port = 5432
 db_user = {odoo_user}
 db_password = {db_pass}
-addons_path = /opt/{odoo_user}/addons
+addons_path = /opt/odoo18/addons
 default_productivity_apps = True
-logfile = /var/log/odoo/${{odoo_user}}.log
+logfile = /var/log/odoo/odoo18.log
 EOL
 
-chown {odoo_user}: /etc/${{odoo_user}}.conf
-chmod 640 /etc/${{odoo_user}}.conf
+chown {odoo_user}: /etc/odoo18.conf
+chmod 640 /etc/odoo18.conf
 chown {odoo_user}:root /var/log/odoo
+progress "Creating systemd service..."
 
 # Configure systemd
-cat > /etc/systemd/system/${{odoo_user}}.service << EOL
+cat > /etc/systemd/system/odoo18.service << EOL
 [Unit]
-Description=Odoo{odoo_version}
+Description=Odoo {odoo_version}
 After=network.target postgresql.service
 
 [Service]
 Type=simple
 User={odoo_user}
-ExecStart=/opt/{odoo_user}/venv/bin/python3 /opt/{odoo_user}/odoo-bin -c /etc/${{odoo_user}}.conf
+ExecStart=/opt/odoo18/venv/bin/python3 /opt/odoo18/odoo-bin -c /etc/odoo18.conf
 
 [Install]
 WantedBy=default.target
 EOL
 
-chmod 755 /etc/systemd/system/${{odoo_user}}.service
+chmod 755 /etc/systemd/system/odoo18.service
+progress "Reloading systemd and starting Odoo service..."
 systemctl daemon-reload
-systemctl start ${{odoo_user}}.service
-systemctl enable ${{odoo_user}}.service
+systemctl start odoo18.service
+systemctl enable odoo18.service
 
 success "Odoo {odoo_version} installation completed"
 '''
@@ -225,7 +251,7 @@ def main():
     config = {
         'vm_id': ask("Container ID (100-999)", "100", r"^[1-9][0-9]{2}$"),
         'hostname': ask("Container hostname", "odoo-server", r"^[a-zA-Z0-9][-a-zA-Z0-9]*$"),
-        'password': ask("Container password", "odoo2025", r"."),
+        'password': ask("Container root password", "Cambiame123", r"."),
         'memory': ask("RAM (MB, min 2048)", "4096", r"^[0-9]+$"),
         'disk': ask("Disk (GB, min 10)", "20", r"^[0-9]+$"),
         'cores': ask("CPU cores", "2", r"^[0-9]+$"),
@@ -281,9 +307,8 @@ def main():
     section("ODOO CONFIGURATION")
     config.update({
         'odoo_version': "18.0",
-        'odoo_user': ask("Odoo user", "odoo18", r"^[a-z][a-z0-9_-]*$"),
-        'db_password': ask("DB password", "odoo2025", r"."),
-        'admin_password': ask("Admin password", "admin2025", r".")
+        'odoo_user': ask("Odoo database user", "odoo18", r"^[a-z][a-z0-9_-]*$"),
+        'db_password': ask("Odoo DB password", "admin2025", r"."),
     })
 
     # Summary
@@ -309,7 +334,6 @@ def main():
     show_group("Odoo Config")
     show_item("Version", config['odoo_version'])
     show_item("User", config['odoo_user'])
-    show_item("Admin password", config['admin_password'])
     show_item("DB password", config['db_password'])
 
     if not confirm_action("\nContinue with installation?", "Y"):
@@ -404,10 +428,49 @@ network:
     # Install Odoo
     section("ODOO INSTALLATION")
     msg(f"Installing Odoo {config['odoo_version']}...")
-    create_odoo_install_script(config['odoo_version'], config['db_password'], config['admin_password'], config['odoo_user'])
+    create_odoo_install_script(config['odoo_version'], config['db_password'], config['odoo_user'])
     run_command(f"pct push {config['vm_id']} /tmp/odoo_install.sh /root/odoo_install.sh")
     run_command(f"pct exec {config['vm_id']} -- chmod +x /root/odoo_install.sh")
-    run_command(f"pct exec {config['vm_id']} -- bash /root/odoo_install.sh")
+
+    # Execute the installation script with real-time output
+    msg("Starting Odoo installation (this may take a while)...")
+
+    try:
+        process = subprocess.Popen(
+            f"pct exec {config['vm_id']} -- bash /root/odoo_install.sh",
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            universal_newlines=True
+        )
+        
+        # Process and display the output in real-time
+        for line in process.stdout:
+            line = line.strip()
+            if "[INFO]" in line:
+                msg(line.replace("[INFO] ", ""), "INFO", "B")
+            elif "[SUCCESS]" in line:
+                success(line.replace("[SUCCESS] ", ""))
+            elif "[WARNING]" in line:
+                warning(line.replace("[WARNING] ", ""))
+            elif "[ERROR]" in line:
+                error(line.replace("[ERROR] ", ""))
+            else:
+                print(f"  {line}")
+        
+        process.stdout.close()
+        return_code = process.wait()
+        
+        if return_code != 0:
+            warning(f"Installation process exited with code {return_code}")
+        else:
+            success("Odoo installation completed successfully")
+            
+    except Exception as e:
+        error(f"Error during installation: {str(e)}")
+
     run_command("rm /tmp/odoo_install.sh")
 
     # Show final info
@@ -418,13 +481,13 @@ network:
     
     show_group("Odoo access information")
     show_item("URL", f"http://{config['ip_address']}:8069")
-    show_item("Admin user", "admin")
-    show_item("Password", config['admin_password'])
+    show_item("Database user", config['odoo_user'])
     show_item("Database password", config['db_password'])
     print("")
     
     show_group("Container access")
     show_item("SSH Command", f"ssh root@{config['ip_address']}")
+    show_item("SSH Password", config['password'])
     show_item("From Proxmox", f"pct enter {config['vm_id']}")
     print(f"\n{C['Y']}NOTE: Wait a few minutes for Odoo to fully initialize.{C['N']}\n")
 
