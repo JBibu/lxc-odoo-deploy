@@ -2,7 +2,9 @@
 
 This script automates the installation of Odoo 18.0 on a Proxmox LXC container with Ubuntu 24.04. It handles everything from creating the container to configuring the network, installing dependencies, and setting up Odoo with PostgreSQL.
 
-![image](https://github.com/user-attachments/assets/cf9031a6-a2e2-46ad-a9bb-8f43d7c4724b)
+
+<p align="center">![image](https://github.com/user-attachments/assets/cf9031a6-a2e2-46ad-a9bb-8f43d7c4724b)</p>
+
 
 ## 🚀 Quick Start
 
