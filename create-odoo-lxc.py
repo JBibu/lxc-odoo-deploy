@@ -342,23 +342,83 @@ def main():
     # Create container
     section("CONTAINER CREATION")
     msg("Creating LXC container...")
-    template = "ubuntu-24.04-standard_24.04-2_amd64.tar.zst"
-
+    
+    # Modified template section - now supports manual download
+    template_name = "ubuntu-24.04-standard_24.04-1_amd64.tar.zst"
+    template_url = f"http://download.proxmox.com/images/system/{template_name}"
     hostname_cmd = run_command("hostname")
 
-
+    # Check if template exists in storage
     template_content_json = run_command(f"pvesh get /nodes/{hostname_cmd}/storage/{storage}/content --output-format=json")
     template_content = json.loads(template_content_json)
-    template_exists = any(item.get('volid', '').endswith(template) for item in template_content)
+    template_exists = any(item.get('volid', '').endswith(template_name) for item in template_content)
 
+    # Try finding template in standard locations
     if not template_exists:
-        msg("Downloading Ubuntu 24.04 template...")
+        msg("Checking for template in standard locations...")
+        
+        # Define possible template locations
+        template_locations = [
+            f"/{storage}/template/cache/{template_name}",
+            f"/var/lib/vz/template/cache/{template_name}"
+        ]
+        
+        for location in template_locations:
+            if run_command(f"test -f {location} && echo 'found'", exit_on_error=False) == 'found':
+                msg(f"Template found at: {location}")
+                template_exists = True
+                
+                # Create storage path for template if needed
+                storage_template_path = f"/var/lib/vz/template/cache"
+                run_command(f"mkdir -p {storage_template_path}")
+                
+                # If template found in non-standard storage location, symlink or copy to standard location
+                if location != f"/var/lib/vz/template/cache/{template_name}":
+                    msg("Copying template to standard location...")
+                    run_command(f"cp {location} /var/lib/vz/template/cache/")
+                
+                break
+    
+    # If template still not found, try to download it
+    if not template_exists:
+        msg(f"Template not found. Attempting to download Ubuntu 24.04 template...")
+        
+        # First try standard method
         run_command("pveam update")
-        run_command(f"pveam download {storage} {template}")
-
+        download_result = run_command(f"pveam download {storage} {template_name}", exit_on_error=False)
+        
+        # If standard method fails, download manually
+        if download_result is None:
+            warning("Standard download failed. Attempting manual download...")
+            
+            # Create template cache directory if it doesn't exist
+            template_dir = f"/var/lib/vz/template/cache"
+            run_command(f"mkdir -p {template_dir}")
+            
+            # Download template
+            msg(f"Downloading template from: {template_url}")
+            download_cmd = f"curl -o {template_dir}/{template_name} {template_url}"
+            download_result = run_command(download_cmd, exit_on_error=False)
+            
+            if download_result is None:
+                error("Manual download failed")
+                
+                # Ask user to provide template path
+                if confirm_action("Do you have the template file available locally?", "N"):
+                    local_path = ask("Enter the full path to the template file", "", None)
+                    if os.path.exists(local_path):
+                        msg(f"Copying template to cache directory...")
+                        run_command(f"cp {local_path} {template_dir}/{template_name}")
+                    else:
+                        error_exit(f"Template file not found at: {local_path}")
+                else:
+                    error_exit("Cannot proceed without template file")
+            else:
+                success("Template downloaded successfully")
+    
     # Create container command
     create_cmd = (
-        f"pct create {config['vm_id']} {storage}:vztmpl/{template} "
+        f"pct create {config['vm_id']} local:vztmpl/{template_name} "
         f"-hostname {config['hostname']} "
         f"-password {config['password']} "
         f"-ostype ubuntu "
