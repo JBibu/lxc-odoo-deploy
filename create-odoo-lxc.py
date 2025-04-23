@@ -35,67 +35,6 @@ def run_command(command, exit_on_error=True, show_output=False):
         if exit_on_error: error_exit(f"Error: {command}\nOutput: {e.stderr}")
         return None
 
-# Download template function
-def download_template(storage, template_name, url=None):
-    """Download template from repository or external URL"""
-    msg(f"Checking for template: {template_name}")
-    hostname_cmd = run_command("hostname")
-    
-    # Check if template already exists in storage
-    template_content_json = run_command(f"pvesh get /nodes/{hostname_cmd}/storage/{storage}/content --output-format=json", exit_on_error=False)
-    if template_content_json:
-        template_content = json.loads(template_content_json)
-        template_exists = any(item.get('volid', '').endswith(template_name) for item in template_content)
-        if template_exists:
-            success(f"Template {template_name} already exists in storage {storage}")
-            return True
-    
-    # Try official repo first
-    msg("Updating template repository...")
-    run_command("pveam update", exit_on_error=False)
-    available_template = run_command(f"pveam available | grep {template_name}", exit_on_error=False)
-    
-    if available_template:
-        msg(f"Template found in repository, downloading {template_name}...")
-        if run_command(f"pveam download {storage} {template_name}", exit_on_error=False):
-            success(f"Downloaded template {template_name} from repository")
-            return True
-    
-    # If repo download fails or template not found, use direct URL
-    if url:
-        msg(f"Template not available in repository. Using direct download URL...")
-        msg(f"Downloading from: {url}")
-        temp_file = f"/tmp/{template_name}"
-        
-        # Download the file
-        download_result = run_command(f"wget -q --show-progress -O {temp_file} {url}", exit_on_error=False, show_output=True)
-        if download_result is None:
-            if not os.path.exists(temp_file) or os.path.getsize(temp_file) == 0:
-                error(f"Failed to download template from {url}")
-                return False
-        
-        # Upload to storage
-        msg(f"Uploading template to storage {storage}...")
-        target_dir = run_command(f"pvesh get /storage/{storage} --output-format=json | jq -r .path", exit_on_error=False)
-        if not target_dir:
-            target_dir = f"/var/lib/vz/template/cache"  # Default path
-            warning(f"Could not determine storage path, using default: {target_dir}")
-        
-        if not os.path.exists(f"{target_dir}/vztmpl"):
-            run_command(f"mkdir -p {target_dir}/vztmpl")
-            
-        run_command(f"cp {temp_file} {target_dir}/vztmpl/{template_name}")
-        if os.path.exists(f"{target_dir}/vztmpl/{template_name}"):
-            run_command(f"rm {temp_file}")
-            success(f"Template uploaded to {storage}")
-            return True
-        else:
-            error(f"Failed to upload template to storage")
-            return False
-    
-    error(f"Template {template_name} is not available")
-    return False
-
 # Storage functions
 def get_storage_data():
     try:
@@ -107,10 +46,10 @@ def get_storage_data():
 def enable_storage_content(storage, content_type, readable_name, storage_data):
     storage_info = next((item for item in storage_data if item['storage'] == storage), None)
     if not storage_info: error_exit(f"Storage '{storage}' not found")
-    
+
     content = storage_info.get('content', '')
     content_list = content.split(',') if content else []
-    
+
     if content_type not in content_list:
         warning(f"Storage '{storage}' does not support {readable_name} ({content_type})")
         if confirm_action(f"Enable {readable_name} support?", "Y"):
@@ -131,11 +70,11 @@ def show_storages(storage_data, storages):
         avail, total, used = info.get('avail', 'N/A'), info.get('total', 'N/A'), info.get('used', 'N/A')
         rootdir_support = "YES" if "rootdir" in content else "NO"
         vztmpl_support = "YES" if "vztmpl" in content else "NO"
-        
+
         format_size = lambda size: f"{size/1024/1024/1024:.2f} GB" if isinstance(size, (int, float)) else "N/A"
         avail_display, total_display, used_display = format_size(avail), format_size(total), format_size(used)
         used_percent = f"{used*100/total:.2f}%" if isinstance(used, (int, float)) and isinstance(total, (int, float)) and total > 0 else "N/A"
-        
+
         print(f"  {C['BOLD']}{index}) {name}{C['N']}")
         show_item("Total space", total_display)
         show_item("Used space", f"{used_display} ({used_percent})")
@@ -273,7 +212,7 @@ def main():
     print(f"{C['Y']}║            AUTOMATED ODOO INSTALLER FOR PROXMOX LXC             ║{C['N']}")
     print(f"{C['Y']}╚═════════════════════════════════════════════════════════════════╝{C['N']}\n")
     print(f"{C['C']}This script will install Odoo 18.0 on a Proxmox LXC with Ubuntu 24.04{C['N']}\n")
-    
+
     if not confirm_action("Continue with installation?", "Y"):
         print(f"{C['Y']}Installation canceled.{C['N']}"); sys.exit(0)
     os.system('clear')
@@ -281,22 +220,22 @@ def main():
     # Check requirements
     section("REQUIREMENTS CHECK")
     if os.geteuid() != 0: error_exit("Please run as root")
-    
+
     # Check dependencies
     msg("Checking dependencies...")
-    missing_deps = [cmd for cmd in ['pvesh', 'pct', 'curl', 'jq', 'wget'] if shutil.which(cmd) is None]
+    missing_deps = [cmd for cmd in ['pvesh', 'pct', 'curl'] if shutil.which(cmd) is None]
     if missing_deps:
         warning(f"Missing: {', '.join(missing_deps)}")
         if confirm_action("Install missing dependencies?", "Y"):
             run_command(f"apt update && apt install -y {' '.join(missing_deps)}")
         else: error_exit("Dependencies required")
-    
+
     # Get storage info
     msg("Getting available storage...")
     storage_data = get_storage_data()
     storages = [item['storage'] for item in storage_data]
     if not storages: error_exit("No storage available")
-    
+
     show_storages(storage_data, storages)
     storage_num = int(ask("Select storage (number)", "1", r"^[0-9]+$"))
     if storage_num < 1 or storage_num > len(storages): error_exit("Invalid selection")
@@ -346,7 +285,7 @@ def main():
             'dns_servers': ask("DNS servers (comma separated)", "9.9.9.9,1.1.1.1"),
             'public_ip': True
         })
-        
+
         # MAC address for public IP
         while True:
             mac = ask("MAC address for public IP", "", None)
@@ -403,34 +342,20 @@ def main():
     # Create container
     section("CONTAINER CREATION")
     msg("Creating LXC container...")
-    
-    # Default template names - try the most recent first, then fallback
-    templates = [
-        "ubuntu-24.04-standard_24.04-2_amd64.tar.zst",
-        "ubuntu-24.04-standard_24.04-1_amd64.tar.zst"
-    ]
+    template = "ubuntu-24.04-standard_24.04-2_amd64.tar.zst"
 
-    # External download URL
-    external_url = "http://download.proxmox.com/images/system/ubuntu-24.04-standard_24.04-1_amd64.tar.zst"
-
-    # Try to get a working template
-    template = None
-    for template_name in templates:
-        if download_template(storage, template_name):
-            template = template_name
-            break
-
-    # If default templates failed, try with the external URL
-    if not template:
-        if download_template(storage, templates[1], external_url):
-            template = templates[1]
-        else:
-            error_exit("Could not obtain a valid Ubuntu 24.04 template")
-
-    success(f"Using template: {template}")
-    
     hostname_cmd = run_command("hostname")
-    
+
+
+    template_content_json = run_command(f"pvesh get /nodes/{hostname_cmd}/storage/{storage}/content --output-format=json")
+    template_content = json.loads(template_content_json)
+    template_exists = any(item.get('volid', '').endswith(template) for item in template_content)
+
+    if not template_exists:
+        msg("Downloading Ubuntu 24.04 template...")
+        run_command("pveam update")
+        run_command(f"pveam download {storage} {template}")
+
     # Create container command
     create_cmd = (
         f"pct create {config['vm_id']} {storage}:vztmpl/{template} "
@@ -441,15 +366,15 @@ def main():
         f"-memory {config['memory']} "
         f"-cores {config['cores']} "
     )
-    
+
     # Network config
     if config['public_ip']:
         create_cmd += f"-net0 name=eth0,bridge=vmbr0,ip={config['ip_address']}/{config['netmask']},gw={config['gateway']},hwaddr={config['mac_address']} "
     else:
         create_cmd += f"-net0 name=eth0,bridge=vmbr0,ip={config['ip_address']}/{config['netmask']},gw={config['gateway']} "
-    
+
     create_cmd += f"-onboot 1 -start 1 -unprivileged 1 -features nesting=1 -nameserver '{config['dns_servers']}'"
-    
+
     run_command(create_cmd)
     success("Container created")
 
@@ -482,29 +407,30 @@ network:
     # Wait for container to start
     msg("Waiting for container to start...")
     network_check_shown = False
-    
+
     for attempt in range(30):
         time.sleep(5)
+
         status_json = run_command(f"pvesh get /nodes/{hostname_cmd}/lxc/{config['vm_id']}/status/current --output-format=json", exit_on_error=False)
         if status_json:
             status_data = json.loads(status_json)
             status = status_data.get('status')
-            
+
             if status == "running":
                 if not network_check_shown:
                     msg("Container is running, checking network connectivity...")
                     network_check_shown = True
-                    
+
                 ping_result = run_command(f"pct exec {config['vm_id']} -- ping -c 1 8.8.8.8", exit_on_error=False)
                 if ping_result is not None:
                     break
-                    
+
         print(".", end="", flush=True)
     print("")
-    
+
     if attempt >= 29:
         warning("Network connectivity might be limited. Continuing anyway...")
-    
+
     success("Network OK, container started")
 
     # Install Odoo
@@ -527,7 +453,7 @@ network:
             bufsize=1,
             universal_newlines=True
         )
-        
+
         # Process and display the output in real-time
         for line in process.stdout:
             line = line.strip()
@@ -541,15 +467,15 @@ network:
                 error(line.replace("[ERROR] ", ""))
             else:
                 print(f"  {line}")
-        
+
         process.stdout.close()
         return_code = process.wait()
-        
+
         if return_code != 0:
             warning(f"Installation process exited with code {return_code}")
         else:
             success("Odoo installation completed successfully")
-            
+
     except Exception as e:
         error(f"Error during installation: {str(e)}")
 
@@ -560,13 +486,13 @@ network:
     print(f"{C['O']}╔═════════════════════════════════════════════════════════════════╗{C['N']}")
     print(f"{C['O']}║                    ODOO INSTALLATION COMPLETED                  ║{C['N']}")
     print(f"{C['O']}╚═════════════════════════════════════════════════════════════════╝{C['N']}")
-    
+
     show_group("Odoo access information")
     show_item("URL", f"http://{config['ip_address']}:8069")
     show_item("Database user", config['odoo_user'])
     show_item("Database password", config['db_password'])
     print("")
-    
+
     show_group("Container access")
     show_item("SSH Command", f"ssh root@{config['ip_address']}")
     show_item("SSH Password", config['password'])
