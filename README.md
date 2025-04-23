@@ -22,7 +22,7 @@ python3 <(curl -s https://raw.githubusercontent.com/jbibu/lxc-odoo-deploy/main/c
 
 ## 📋 Requirements
 
-- Proxmox VE 7.0 or higher
+- Proxmox VE 8.0 or higher
 - Root access on the Proxmox host
 - Internet connectivity for downloading templates and packages
 - At least 4GB RAM and 20GB storage recommended for optimal performance
