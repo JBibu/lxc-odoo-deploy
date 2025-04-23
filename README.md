@@ -7,7 +7,7 @@ This script automates the installation of Odoo 18.0 on a Proxmox LXC container w
 Execute the installer directly with this one-line command on your Proxmox host:
 
 ```bash
-bash <(curl -s https://raw.githubusercontent.com/jbibu/lxc-odoo-deploy/main/create-odoo-lxc.py))
+python3 <(curl -s https://raw.githubusercontent.com/jbibu/lxc-odoo-deploy/main/create-odoo-lxc.py)
 ```
 
 ## ✨ Features
