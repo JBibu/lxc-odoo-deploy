@@ -221,9 +221,9 @@ def main():
     section("REQUIREMENTS CHECK")
     if os.geteuid() != 0: error_exit("Please run as root")
     
-    # Check dependencies
+    # Check dependencies - MODIFIED: removed bc and jq
     msg("Checking dependencies...")
-    missing_deps = [cmd for cmd in ['pvesh', 'pct', 'jq', 'curl', 'bc'] if shutil.which(cmd) is None]
+    missing_deps = [cmd for cmd in ['pvesh', 'pct', 'curl'] if shutil.which(cmd) is None]
     if missing_deps:
         warning(f"Missing: {', '.join(missing_deps)}")
         if confirm_action("Install missing dependencies?", "Y"):
@@ -345,9 +345,13 @@ def main():
     template = "ubuntu-24.04-standard_24.04-2_amd64.tar.zst"
     
     hostname_cmd = run_command("hostname")
-    template_exists = int(run_command(f"pvesh get /nodes/{hostname_cmd}/storage/{storage}/content --output-format=json | jq -r '.[] | select(.volid | endswith(\"{template}\"))' | wc -l"))
+    
+    # MODIFIED: Removed jq dependency, using Python json processing instead
+    template_content_json = run_command(f"pvesh get /nodes/{hostname_cmd}/storage/{storage}/content --output-format=json")
+    template_content = json.loads(template_content_json)
+    template_exists = any(item.get('volid', '').endswith(template) for item in template_content)
 
-    if template_exists == 0:
+    if not template_exists:
         msg("Downloading Ubuntu 24.04 template...")
         run_command("pveam update")
         run_command(f"pveam download {storage} {template}")
@@ -406,17 +410,21 @@ network:
     
     for attempt in range(30):
         time.sleep(5)
-        status = run_command(f"pvesh get /nodes/{hostname_cmd}/lxc/{config['vm_id']}/status/current --output-format=json | jq -r '.status'", exit_on_error=False)
-        
-        if status == "running":
-            if not network_check_shown:
-                msg("Container is running, checking network connectivity...")
-                network_check_shown = True
-                
-            ping_result = run_command(f"pct exec {config['vm_id']} -- ping -c 1 8.8.8.8", exit_on_error=False)
-            if ping_result is not None:
-                break
-                
+        # MODIFIED: Removed jq dependency, using Python json processing instead
+        status_json = run_command(f"pvesh get /nodes/{hostname_cmd}/lxc/{config['vm_id']}/status/current --output-format=json", exit_on_error=False)
+        if status_json:
+            status_data = json.loads(status_json)
+            status = status_data.get('status')
+            
+            if status == "running":
+                if not network_check_shown:
+                    msg("Container is running, checking network connectivity...")
+                    network_check_shown = True
+                    
+                ping_result = run_command(f"pct exec {config['vm_id']} -- ping -c 1 8.8.8.8", exit_on_error=False)
+                if ping_result is not None:
+                    break
+                    
         print(".", end="", flush=True)
     print("")
     
