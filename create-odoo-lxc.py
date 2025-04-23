@@ -35,6 +35,67 @@ def run_command(command, exit_on_error=True, show_output=False):
         if exit_on_error: error_exit(f"Error: {command}\nOutput: {e.stderr}")
         return None
 
+# Download template function
+def download_template(storage, template_name, url=None):
+    """Download template from repository or external URL"""
+    msg(f"Checking for template: {template_name}")
+    hostname_cmd = run_command("hostname")
+    
+    # Check if template already exists in storage
+    template_content_json = run_command(f"pvesh get /nodes/{hostname_cmd}/storage/{storage}/content --output-format=json", exit_on_error=False)
+    if template_content_json:
+        template_content = json.loads(template_content_json)
+        template_exists = any(item.get('volid', '').endswith(template_name) for item in template_content)
+        if template_exists:
+            success(f"Template {template_name} already exists in storage {storage}")
+            return True
+    
+    # Try official repo first
+    msg("Updating template repository...")
+    run_command("pveam update", exit_on_error=False)
+    available_template = run_command(f"pveam available | grep {template_name}", exit_on_error=False)
+    
+    if available_template:
+        msg(f"Template found in repository, downloading {template_name}...")
+        if run_command(f"pveam download {storage} {template_name}", exit_on_error=False):
+            success(f"Downloaded template {template_name} from repository")
+            return True
+    
+    # If repo download fails or template not found, use direct URL
+    if url:
+        msg(f"Template not available in repository. Using direct download URL...")
+        msg(f"Downloading from: {url}")
+        temp_file = f"/tmp/{template_name}"
+        
+        # Download the file
+        download_result = run_command(f"wget -q --show-progress -O {temp_file} {url}", exit_on_error=False, show_output=True)
+        if download_result is None:
+            if not os.path.exists(temp_file) or os.path.getsize(temp_file) == 0:
+                error(f"Failed to download template from {url}")
+                return False
+        
+        # Upload to storage
+        msg(f"Uploading template to storage {storage}...")
+        target_dir = run_command(f"pvesh get /storage/{storage} --output-format=json | jq -r .path", exit_on_error=False)
+        if not target_dir:
+            target_dir = f"/var/lib/vz/template/cache"  # Default path
+            warning(f"Could not determine storage path, using default: {target_dir}")
+        
+        if not os.path.exists(f"{target_dir}/vztmpl"):
+            run_command(f"mkdir -p {target_dir}/vztmpl")
+            
+        run_command(f"cp {temp_file} {target_dir}/vztmpl/{template_name}")
+        if os.path.exists(f"{target_dir}/vztmpl/{template_name}"):
+            run_command(f"rm {temp_file}")
+            success(f"Template uploaded to {storage}")
+            return True
+        else:
+            error(f"Failed to upload template to storage")
+            return False
+    
+    error(f"Template {template_name} is not available")
+    return False
+
 # Storage functions
 def get_storage_data():
     try:
@@ -223,7 +284,7 @@ def main():
     
     # Check dependencies
     msg("Checking dependencies...")
-    missing_deps = [cmd for cmd in ['pvesh', 'pct', 'curl'] if shutil.which(cmd) is None]
+    missing_deps = [cmd for cmd in ['pvesh', 'pct', 'curl', 'jq', 'wget'] if shutil.which(cmd) is None]
     if missing_deps:
         warning(f"Missing: {', '.join(missing_deps)}")
         if confirm_action("Install missing dependencies?", "Y"):
@@ -342,19 +403,34 @@ def main():
     # Create container
     section("CONTAINER CREATION")
     msg("Creating LXC container...")
-    template = "ubuntu-24.04-standard_24.04-2_amd64.tar.zst"
+    
+    # Default template names - try the most recent first, then fallback
+    templates = [
+        "ubuntu-24.04-standard_24.04-2_amd64.tar.zst",
+        "ubuntu-24.04-standard_24.04-1_amd64.tar.zst"
+    ]
+
+    # External download URL
+    external_url = "http://download.proxmox.com/images/system/ubuntu-24.04-standard_24.04-1_amd64.tar.zst"
+
+    # Try to get a working template
+    template = None
+    for template_name in templates:
+        if download_template(storage, template_name):
+            template = template_name
+            break
+
+    # If default templates failed, try with the external URL
+    if not template:
+        if download_template(storage, templates[1], external_url):
+            template = templates[1]
+        else:
+            error_exit("Could not obtain a valid Ubuntu 24.04 template")
+
+    success(f"Using template: {template}")
     
     hostname_cmd = run_command("hostname")
     
-    template_content_json = run_command(f"pvesh get /nodes/{hostname_cmd}/storage/{storage}/content --output-format=json")
-    template_content = json.loads(template_content_json)
-    template_exists = any(item.get('volid', '').endswith(template) for item in template_content)
-
-    if not template_exists:
-        msg("Downloading Ubuntu 24.04 template...")
-        run_command("pveam update")
-        run_command(f"pveam download {storage} {template}")
-
     # Create container command
     create_cmd = (
         f"pct create {config['vm_id']} {storage}:vztmpl/{template} "
