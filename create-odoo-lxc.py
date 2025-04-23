@@ -221,7 +221,7 @@ def main():
     section("REQUIREMENTS CHECK")
     if os.geteuid() != 0: error_exit("Please run as root")
     
-    # Check dependencies - MODIFIED: removed bc and jq
+    # Check dependencies
     msg("Checking dependencies...")
     missing_deps = [cmd for cmd in ['pvesh', 'pct', 'curl'] if shutil.which(cmd) is None]
     if missing_deps:
@@ -346,7 +346,6 @@ def main():
     
     hostname_cmd = run_command("hostname")
     
-    # MODIFIED: Removed jq dependency, using Python json processing instead
     template_content_json = run_command(f"pvesh get /nodes/{hostname_cmd}/storage/{storage}/content --output-format=json")
     template_content = json.loads(template_content_json)
     template_exists = any(item.get('volid', '').endswith(template) for item in template_content)
@@ -410,7 +409,6 @@ network:
     
     for attempt in range(30):
         time.sleep(5)
-        # MODIFIED: Removed jq dependency, using Python json processing instead
         status_json = run_command(f"pvesh get /nodes/{hostname_cmd}/lxc/{config['vm_id']}/status/current --output-format=json", exit_on_error=False)
         if status_json:
             status_data = json.loads(status_json)
