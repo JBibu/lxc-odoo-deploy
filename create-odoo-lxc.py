@@ -105,22 +105,6 @@ def create_odoo_install_script(odoo_version, db_pass, odoo_user, custom_modules)
     has_custom_modules = len(custom_modules) > 0
     custom_modules_str = ', '.join([f'"{m}"' for m in custom_modules])
     
-    custom_modules_section = f'''
-# Install custom modules
-info "Installing custom modules..."
-mkdir -p /opt/odoo18/custom_addons
-chown {odoo_user}: /opt/odoo18/custom_addons
-
-# Copy custom modules to Odoo
-for module in {custom_modules_str}; do
-    progress "Installing module: $module"
-    cp -r /tmp/custom_modules/$module /opt/odoo18/custom_addons/
-done
-
-chown -R {odoo_user}: /opt/odoo18/custom_addons/
-success "Custom modules installed"
-''' if has_custom_modules else ''
-
     addons_path = f'/opt/odoo18/addons,/opt/odoo18/custom_addons' if has_custom_modules else f'/opt/odoo18/addons'
 
     script_content = f'''#!/bin/bash
@@ -194,7 +178,23 @@ dpkg -i wkhtmltox_0.12.6.1-2.jammy_amd64.deb || apt-get install -f -y
 deactivate
 success "wkhtmltopdf installed"
 
-{custom_modules_section}
+'''+\
+(f'''
+# Install custom modules
+info "Installing custom modules..."
+mkdir -p /opt/odoo18/custom_addons
+chown {odoo_user}: /opt/odoo18/custom_addons
+
+# Copy custom modules to Odoo
+for module in {custom_modules_str}; do
+    progress "Installing module: $module"
+    cp -r /tmp/custom_modules/$module /opt/odoo18/custom_addons/
+done
+
+chown -R {odoo_user}: /opt/odoo18/custom_addons/
+success "Custom modules installed"
+''' if has_custom_modules else '')+\
+f'''
 
 # Configure Odoo
 info "Configuring Odoo..."
