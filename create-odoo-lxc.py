@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Script for Odoo 18.0 installation on Proxmox LXC with Ubuntu 24.04
-import os, sys, json, subprocess, re, time, shutil
+import os, sys, json, subprocess, re, time, shutil, glob
 
 # Color configuration
 C = {
@@ -83,8 +83,46 @@ def show_storages(storage_data, storages):
         show_item("Template compatible", vztmpl_support)
         print("")
 
+# Check for custom modules
+def check_custom_modules():
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    modules_dir = os.path.join(script_dir, "modules")
+    
+    if not os.path.exists(modules_dir):
+        msg("No 'modules' directory found")
+        return []
+    
+    modules = []
+    for item in os.listdir(modules_dir):
+        module_path = os.path.join(modules_dir, item)
+        if os.path.isdir(module_path) and os.path.exists(os.path.join(module_path, "__manifest__.py")):
+            modules.append(item)
+    
+    return modules, modules_dir
+
 # Create Odoo installation script
-def create_odoo_install_script(odoo_version, db_pass, odoo_user):
+def create_odoo_install_script(odoo_version, db_pass, odoo_user, custom_modules):
+    has_custom_modules = len(custom_modules) > 0
+    custom_modules_str = ', '.join([f'"{m}"' for m in custom_modules])
+    
+    custom_modules_section = f'''
+# Install custom modules
+info "Installing custom modules..."
+mkdir -p /opt/odoo18/custom_addons
+chown {odoo_user}: /opt/odoo18/custom_addons
+
+# Copy custom modules to Odoo
+for module in {custom_modules_str}; do
+    progress "Installing module: $module"
+    cp -r /tmp/custom_modules/$module /opt/odoo18/custom_addons/
+done
+
+chown -R {odoo_user}: /opt/odoo18/custom_addons/
+success "Custom modules installed"
+''' if has_custom_modules else ''
+
+    addons_path = f'/opt/odoo18/addons,/opt/odoo18/custom_addons' if has_custom_modules else f'/opt/odoo18/addons'
+
     script_content = f'''#!/bin/bash
 # Odoo {odoo_version} installation script
 info() {{ echo "[INFO] $1"; }}
@@ -125,7 +163,7 @@ success "PostgreSQL configured"
 
 # Create Odoo user
 info "Creating system user for Odoo..."
-adduser --system --home=/opt/{odoo_user} --group {odoo_user}
+adduser --system --home=/opt/odoo18 --group {odoo_user}
 success "System user created"
 
 # Clone Odoo
@@ -156,6 +194,8 @@ dpkg -i wkhtmltox_0.12.6.1-2.jammy_amd64.deb || apt-get install -f -y
 deactivate
 success "wkhtmltopdf installed"
 
+{custom_modules_section}
+
 # Configure Odoo
 info "Configuring Odoo..."
 mkdir -p /var/log/odoo
@@ -168,7 +208,7 @@ db_host = localhost
 db_port = 5432
 db_user = {odoo_user}
 db_password = {db_pass}
-addons_path = /opt/odoo18/addons
+addons_path = {addons_path}
 default_productivity_apps = True
 logfile = /var/log/odoo/odoo18.log
 EOL
@@ -229,6 +269,18 @@ def main():
         if confirm_action("Install missing dependencies?", "Y"):
             run_command(f"apt update && apt install -y {' '.join(missing_deps)}")
         else: error_exit("Dependencies required")
+
+    # Check custom modules
+    section("CUSTOM MODULES CHECK")
+    custom_modules, modules_dir = check_custom_modules()
+    if custom_modules:
+        success(f"Found {len(custom_modules)} custom modules: {', '.join(custom_modules)}")
+    else:
+        warning("No custom modules found in the 'modules' directory")
+        if confirm_action("Continue without custom modules?", "Y"):
+            pass
+        else:
+            error_exit("Custom modules are required for this installation")
 
     # Get storage info
     msg("Getting available storage...")
@@ -335,6 +387,12 @@ def main():
     show_item("Version", config['odoo_version'])
     show_item("User", config['odoo_user'])
     show_item("DB password", config['db_password'])
+    
+    if custom_modules:
+        print("")
+        show_group("Custom Modules")
+        for module in custom_modules:
+            show_item("Module", module)
 
     if not confirm_action("\nContinue with installation?", "Y"):
         msg("Installation canceled"); sys.exit(0)
@@ -345,7 +403,6 @@ def main():
     template = "ubuntu-24.04-standard_24.04-2_amd64.tar.zst"
 
     hostname_cmd = run_command("hostname")
-
 
     template_content_json = run_command(f"pvesh get /nodes/{hostname_cmd}/storage/{storage}/content --output-format=json")
     template_content = json.loads(template_content_json)
@@ -433,10 +490,38 @@ network:
 
     success("Network OK, container started")
 
+    # Copy custom modules to container if available
+    if custom_modules:
+        section("CUSTOM MODULES SETUP")
+        msg("Copying custom modules to container...")
+        
+        # Create a temporary directory in the container
+        run_command(f"pct exec {config['vm_id']} -- mkdir -p /tmp/custom_modules")
+        
+        # Copy each module to the container
+        for module in custom_modules:
+            module_path = os.path.join(modules_dir, module)
+            tmp_tar = f"/tmp/{module}.tar.gz"
+            
+            # Create a tar archive of the module
+            run_command(f"tar -czf {tmp_tar} -C {modules_dir} {module}")
+            
+            # Copy the tar to the container
+            run_command(f"pct push {config['vm_id']} {tmp_tar} /tmp/{module}.tar.gz")
+            
+            # Extract in the container
+            run_command(f"pct exec {config['vm_id']} -- tar -xzf /tmp/{module}.tar.gz -C /tmp/custom_modules")
+            
+            # Clean up
+            run_command(f"rm {tmp_tar}")
+            run_command(f"pct exec {config['vm_id']} -- rm /tmp/{module}.tar.gz")
+            
+            success(f"Module '{module}' transferred to container")
+
     # Install Odoo
     section("ODOO INSTALLATION")
     msg(f"Installing Odoo {config['odoo_version']}...")
-    create_odoo_install_script(config['odoo_version'], config['db_password'], config['odoo_user'])
+    create_odoo_install_script(config['odoo_version'], config['db_password'], config['odoo_user'], custom_modules)
     run_command(f"pct push {config['vm_id']} /tmp/odoo_install.sh /root/odoo_install.sh")
     run_command(f"pct exec {config['vm_id']} -- chmod +x /root/odoo_install.sh")
 
@@ -465,6 +550,8 @@ network:
                 warning(line.replace("[WARNING] ", ""))
             elif "[ERROR]" in line:
                 error(line.replace("[ERROR] ", ""))
+            elif "[PROGRESS]" in line:
+                msg(line.replace("[PROGRESS] ", ""), "PROGRESS", "O")
             else:
                 print(f"  {line}")
 
@@ -497,6 +584,16 @@ network:
     show_item("SSH Command", f"ssh root@{config['ip_address']}")
     show_item("SSH Password", config['password'])
     show_item("From Proxmox", f"pct enter {config['vm_id']}")
+    
+    if custom_modules:
+        print("")
+        show_group("Custom modules")
+        for module in custom_modules:
+            show_item("Module installed", module)
+        
+        print(f"\n{C['Y']}NOTE: Custom modules will be available after creating the database.{C['N']}")
+        print(f"{C['Y']}      You'll need to activate them from the Apps menu in Odoo.{C['N']}")
+        
     print(f"\n{C['Y']}NOTE: Wait a few minutes for Odoo to fully initialize.{C['N']}\n")
 
 if __name__ == "__main__":
