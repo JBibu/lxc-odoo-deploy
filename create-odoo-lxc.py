@@ -90,7 +90,7 @@ def check_custom_modules():
     
     if not os.path.exists(modules_dir):
         msg("No 'modules' directory found")
-        return []
+        return [], modules_dir
     
     modules = []
     for item in os.listdir(modules_dir):
