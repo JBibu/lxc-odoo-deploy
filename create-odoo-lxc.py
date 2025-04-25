@@ -160,11 +160,9 @@ success "Odoo repository cloned"
 info "Installing Python dependencies..."
 python3 -m venv /opt/odoo18/venv
 cd /opt/odoo18/
-source venv/bin/activate
-progress "Installing wheel package..."
-pip install wheel
-progress "Installing Python requirements (this may take several minutes)..."
-pip install -r requirements.txt
+progress "Installing Python requirements in virtual environment (this may take several minutes)..."
+/opt/odoo18/venv/bin/pip install wheel
+/opt/odoo18/venv/bin/pip install -r requirements.txt
 success "Python dependencies installed"
 
 # Install wkhtmltopdf
@@ -175,7 +173,6 @@ progress "Downloading wkhtmltopdf..."
 wget -q https://github.com/wkhtmltopdf/packaging/releases/download/0.12.6.1-2/wkhtmltox_0.12.6.1-2.jammy_amd64.deb
 progress "Installing wkhtmltopdf package..."
 dpkg -i wkhtmltox_0.12.6.1-2.jammy_amd64.deb || apt-get install -f -y
-deactivate
 success "wkhtmltopdf installed"
 
 '''+\
