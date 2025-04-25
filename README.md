@@ -10,6 +10,8 @@ Execute the installer directly with this one-line command on your Proxmox host:
 python3 <(curl -s https://raw.githubusercontent.com/jbibu/lxc-odoo-deploy/main/create-odoo-lxc.py)
 ```
 
+> ⚠️ **Note**: The quick start method does not support custom modules installation. If you need to install custom modules, please use the [Manual Installation](#%EF%B8%8F-manual-installation) method instead.
+
 ## ✨ Features
 
 - **Fully automated** installation of Odoo 18.0 on Ubuntu 24.04 LXC
@@ -17,6 +19,7 @@ python3 <(curl -s https://raw.githubusercontent.com/jbibu/lxc-odoo-deploy/main/c
 - **Flexible networking** options (local or public IP)
 - **Storage verification** to ensure container compatibility
 - **Complete system configuration** including PostgreSQL, Python dependencies, and wkhtmltopdf
+- **Custom modules support** - automatically installs modules from a local directory
 - **Systemd service** setup for automatic startup
 - **Real-time progress** updates during installation
 
@@ -55,14 +58,39 @@ After confirming your selections, the script automatically:
 4. Installs Odoo and all dependencies
 5. Sets up the database and system services
 
+## 📦 Custom Modules
+
+The script supports installing custom Odoo modules during the setup process, but **only when using the manual installation method**:
+
+1. Clone the repository as described in the [Manual Installation](#%EF%B8%8F-manual-installation) section
+2. Create a `modules` directory in the same location as the script
+3. Place your custom Odoo modules in this directory
+   - Each module should be in its own folder with a valid `__manifest__.py` file
+4. Run the installation script
+5. The script will automatically detect and install your custom modules
+
+Example structure:
+```
+├── create-odoo-lxc.py
+├── modules/
+│   ├── my_custom_module1/
+│   │   ├── __init__.py
+│   │   ├── __manifest__.py
+│   │   └── ... (other module files)
+│   └── my_custom_module2/
+│       ├── __init__.py
+│       ├── __manifest__.py
+│       └── ... (other module files)
+```
+
+The custom modules will be installed in Odoo's `custom_addons` directory and will be available after creating the database. You'll need to activate them from the Apps menu in Odoo.
+
 ## ✅ After Installation
 
 Once installation is complete, you can access the web interface and continue with the Odoo setup.
 
 
 ## 🛠️ Manual Installation
-
-If you prefer to download the script first:
 
 1. Download the installation script:
    ```bash
@@ -74,12 +102,18 @@ If you prefer to download the script first:
    cd lxc-odoo-deploy
    ```
 
-3. Make it executable:
+3. If you want to install custom modules:
+   ```bash
+   mkdir -p modules
+   # Copy your custom Odoo modules into the modules directory
+   ```
+
+4. Make the script executable:
    ```bash
    chmod +x create-odoo-lxc.py
    ```
 
-4. Run the script as root:
+5. Run the script as root:
    ```bash
    ./create-odoo-lxc.py
    ```
