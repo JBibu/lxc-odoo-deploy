@@ -19,7 +19,7 @@ python3 <(curl -s https://raw.githubusercontent.com/jbibu/lxc-odoo-deploy/main/c
 - **Flexible networking** options (local or public IP)
 - **Storage verification** to ensure container compatibility
 - **Complete system configuration** including PostgreSQL, Python dependencies, and wkhtmltopdf
-- **Custom modules support** - automatically installs modules from a local directory
+- **Custom modules support** for extra modules
 - **Systemd service** setup for automatic startup
 - **Real-time progress** updates during installation
 
@@ -55,7 +55,7 @@ After confirming your selections, the script automatically:
 1. Downloads the Ubuntu 24.04 template (if needed)
 2. Creates and starts the LXC container
 3. Configures networking
-4. Installs Odoo and all dependencies
+4. Installs Odoo, its dependencies and the modules
 5. Sets up the database and system services
 
 ## 📦 Custom Modules
