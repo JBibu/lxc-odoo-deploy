@@ -35,20 +35,6 @@ def run_command(command, exit_on_error=True, show_output=False):
         if exit_on_error: error_exit(f"Error: {command}\nOutput: {e.stderr}")
         return None
 
-# Check if script is being piped (curl execution)
-def is_piped_execution():
-    try:
-        # When executed via curl/pipe, sys.stdin is not a tty
-        if not sys.stdin.isatty():
-            return True
-        # Check if the script file is a temporary file (typical for piped execution)
-        script_path = os.path.abspath(__file__)
-        if script_path.startswith('/tmp/') or '<stdin>' in script_path:
-            return True
-        return False
-    except:
-        return True  # Assume piped execution if we can't determine
-
 # Storage functions
 def get_storage_data():
     try:
@@ -99,14 +85,11 @@ def show_storages(storage_data, storages):
 
 # Check for custom modules
 def check_custom_modules():
-    # If running via curl, skip custom modules check completely and silently
-    if is_piped_execution():
-        return [], None
-    
     script_dir = os.path.dirname(os.path.abspath(__file__))
     modules_dir = os.path.join(script_dir, "modules")
     
     if not os.path.exists(modules_dir):
+        msg("No 'modules' directory found")
         return [], modules_dir
     
     modules = []
@@ -285,19 +268,16 @@ def main():
         else: error_exit("Dependencies required")
 
     # Check custom modules
+    section("CUSTOM MODULES CHECK")
     custom_modules, modules_dir = check_custom_modules()
-    
-    # Only show custom module section if not running via curl AND if we have module info
-    if not is_piped_execution() and modules_dir is not None:
-        section("CUSTOM MODULES CHECK")
-        if custom_modules:
-            success(f"Found {len(custom_modules)} custom modules: {', '.join(custom_modules)}")
+    if custom_modules:
+        success(f"Found {len(custom_modules)} custom modules: {', '.join(custom_modules)}")
+    else:
+        warning("No custom modules found in the 'modules' directory")
+        if confirm_action("Continue without custom modules?", "Y"):
+            pass
         else:
-            warning("No custom modules found in the 'modules' directory")
-            if confirm_action("Continue without custom modules?", "Y"):
-                pass
-            else:
-                error_exit("Custom modules are required for this installation")
+            error_exit("Custom modules are required for this installation")
 
     # Get storage info
     msg("Getting available storage...")
