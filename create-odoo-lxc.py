@@ -35,6 +35,11 @@ def run_command(command, exit_on_error=True, show_output=False):
         if exit_on_error: error_exit(f"Error: {command}\nOutput: {e.stderr}")
         return None
 
+# Check if script is run via curl
+def is_run_via_curl():
+    # Check if script is run from stdin (piped from curl)
+    return not sys.stdin.isatty()
+
 # Storage functions
 def get_storage_data():
     try:
@@ -85,6 +90,10 @@ def show_storages(storage_data, storages):
 
 # Check for custom modules
 def check_custom_modules():
+    # Skip custom modules check if run via curl
+    if is_run_via_curl():
+        return [], None
+    
     script_dir = os.path.dirname(os.path.abspath(__file__))
     modules_dir = os.path.join(script_dir, "modules")
     
@@ -268,16 +277,18 @@ def main():
         else: error_exit("Dependencies required")
 
     # Check custom modules
-    section("CUSTOM MODULES CHECK")
-    custom_modules, modules_dir = check_custom_modules()
-    if custom_modules:
-        success(f"Found {len(custom_modules)} custom modules: {', '.join(custom_modules)}")
-    else:
-        warning("No custom modules found in the 'modules' directory")
-        if confirm_action("Continue without custom modules?", "Y"):
-            pass
+    custom_modules = []
+    modules_dir = None
+    
+    if not is_run_via_curl():
+        section("CUSTOM MODULES CHECK")
+        custom_modules, modules_dir = check_custom_modules()
+        if custom_modules:
+            success(f"Found {len(custom_modules)} custom modules: {', '.join(custom_modules)}")
         else:
-            error_exit("Custom modules are required for this installation")
+            warning("No custom modules found in the 'modules' directory")
+            if not confirm_action("Continue without custom modules?", "Y"):
+                error_exit("Custom modules are required for this installation")
 
     # Get storage info
     msg("Getting available storage...")
@@ -487,8 +498,8 @@ network:
 
     success("Network OK, container started")
 
-    # Copy custom modules to container if available
-    if custom_modules:
+    # Copy custom modules to container if available - Skip if run via curl
+    if custom_modules and not is_run_via_curl():
         section("CUSTOM MODULES SETUP")
         msg("Copying custom modules to container...")
         
@@ -582,7 +593,7 @@ network:
     show_item("SSH Password", config['password'])
     show_item("From Proxmox", f"pct enter {config['vm_id']}")
     
-    if custom_modules:
+    if custom_modules and not is_run_via_curl():
         print("")
         show_group("Custom modules")
         for module in custom_modules:
