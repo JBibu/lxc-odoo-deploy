@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Script for Odoo 18.0 installation on Proxmox LXC with Ubuntu 24.04
-import os, sys, json, subprocess, re, time, shutil, glob
+import os, sys, json, subprocess, re, time, shutil, glob, atexit
 
 # Color configuration
 C = {
@@ -23,7 +23,6 @@ def ask(prompt, default, validation=None, error_msg="Invalid value"):
         if validation is None or re.match(validation, user_input): return user_input
         warning(error_msg)
 def confirm_action(prompt, default): 
-    # Format options based on default (Y/n or y/N)
     options = "Y/n" if default.lower().startswith('y') else "y/N"
     return (input(f"{C['G']}{prompt} ({options}): {C['N']}").strip().lower() or default.lower()).startswith('y')
 def run_command(command, exit_on_error=True, show_output=False):
@@ -34,6 +33,21 @@ def run_command(command, exit_on_error=True, show_output=False):
     except subprocess.CalledProcessError as e:
         if exit_on_error: error_exit(f"Error: {command}\nOutput: {e.stderr}")
         return None
+
+# NBD cleanup function
+def cleanup_nbd_devices():
+    """Clean up any lingering NBD devices"""
+    try:
+        nbd_devices = run_command("ls /dev/nbd* 2>/dev/null | grep -E '/dev/nbd[0-9]+$'", exit_on_error=False)
+        if nbd_devices:
+            for device in nbd_devices.split('\n'):
+                if device:
+                    run_command(f"qemu-nbd --disconnect {device} 2>/dev/null", exit_on_error=False)
+    except:
+        pass
+
+# Register cleanup on exit
+atexit.register(cleanup_nbd_devices)
 
 # Storage functions
 def get_storage_data():
@@ -409,6 +423,7 @@ def main():
         msg("Downloading Ubuntu 24.04 template...")
         run_command("pveam update")
         run_command(f"pveam download {storage} {template}")
+        cleanup_nbd_devices()  # Clean after template download
 
     # Create container command
     create_cmd = (
@@ -431,6 +446,7 @@ def main():
 
     run_command(create_cmd)
     success("Container created")
+    cleanup_nbd_devices()  # Clean after container creation
 
     # Configure for public IP /32
     if config['public_ip']:
