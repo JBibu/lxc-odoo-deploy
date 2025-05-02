@@ -99,7 +99,7 @@ def show_storages(storage_data, storages):
 
 # Check for custom modules
 def check_custom_modules():
-    # If running via curl, skip custom modules check
+    # If running via curl, skip custom modules check completely and silently
     if is_piped_execution():
         return [], None
     
@@ -107,7 +107,6 @@ def check_custom_modules():
     modules_dir = os.path.join(script_dir, "modules")
     
     if not os.path.exists(modules_dir):
-        msg("No 'modules' directory found")
         return [], modules_dir
     
     modules = []
@@ -288,8 +287,8 @@ def main():
     # Check custom modules
     custom_modules, modules_dir = check_custom_modules()
     
-    # Only show custom module section if not running via curl
-    if not is_piped_execution():
+    # Only show custom module section if not running via curl AND if we have module info
+    if not is_piped_execution() and modules_dir is not None:
         section("CUSTOM MODULES CHECK")
         if custom_modules:
             success(f"Found {len(custom_modules)} custom modules: {', '.join(custom_modules)}")
