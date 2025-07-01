@@ -1,4 +1,4 @@
-# LXC Odoo Deploy
+![image](https://github.com/user-attachments/assets/42b925c8-9780-47e6-9b85-4285ffe9dda7)
 
 Script that installs Odoo 18.0 on a Proxmox LXC container with Ubuntu 24.04. Handles container creation, network configuration, dependency installation, Odoo setup with PostgreSQL, and custom module installation.
 
@@ -119,4 +119,4 @@ Access the web interface to continue Odoo setup.
 
 ## License
 
-GNU General Public License v3.0
+GPL-3.0 License - see [LICENSE](LICENSE) file.
